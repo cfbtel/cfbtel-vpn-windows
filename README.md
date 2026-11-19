@@ -28,7 +28,7 @@ Repository secrets (Settings → Secrets and variables → Actions):
 
 | Secret | What |
 |---|---|
-| `CFBTEL_RELEASE_KEY` | private key from `go run ./tools/releasesign keygen` (public key is in `updater/constants.go`) |
+| `CFBTEL_RELEASE_KEY` | private key from `tools/releasesign` (double-click the Windows build: it copies the private key to the clipboard and shows the public key for `updater/constants.go`) |
 | `CFBTEL_PORTAL_URL` | `https://<staff VPN page host>`; kept out of the source |
 | `CFBTEL_CODESIGN_PFX` | base64 of the code-signing `.pfx` |
 | `CFBTEL_CODESIGN_PASSWORD` | its password |

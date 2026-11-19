@@ -19,7 +19,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"golang.org/x/crypto/blake2b"
@@ -28,6 +30,30 @@ import (
 func die(err error) {
 	fmt.Fprintln(os.Stderr, "releasesign:", err)
 	os.Exit(1)
+}
+
+// keygenClipboard (Windows): the private key goes straight to the clipboard, never on screen.
+func keygenClipboard() {
+	pub, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		die(err)
+	}
+	keyNum := make([]byte, 8)
+	rand.Read(keyNum)
+	cmd := exec.Command("clip.exe")
+	cmd.Stdin = strings.NewReader(base64.StdEncoding.EncodeToString(append(append([]byte("Ed"), keyNum...), priv...)))
+	if err := cmd.Run(); err != nil {
+		die(err)
+	}
+	fmt.Println("The PRIVATE key is now on your clipboard. Paste it into GitHub:")
+	fmt.Println("  github.com/cfbtel/cfbtel-vpn-windows/settings/secrets/actions -> New repository secret")
+	fmt.Println("  Name: CFBTEL_RELEASE_KEY    Secret: Ctrl+V    -> Add secret")
+	fmt.Println()
+	fmt.Println("Then send this PUBLIC key to Claude (it's safe to share):")
+	fmt.Println("  " + base64.StdEncoding.EncodeToString(append(append([]byte("Ed"), keyNum...), pub...)))
+	fmt.Println()
+	fmt.Println("Press Enter to close.")
+	fmt.Scanln()
 }
 
 func keygen() {
@@ -95,6 +121,10 @@ func verify(sigPath, pub64 string) {
 }
 
 func main() {
+	if len(os.Args) == 1 && runtime.GOOS == "windows" {
+		keygenClipboard() // double-clicked
+		return
+	}
 	if len(os.Args) >= 2 && os.Args[1] == "keygen" {
 		keygen()
 		return
