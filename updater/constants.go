@@ -7,7 +7,7 @@ package updater
 
 const (
 	// CFBTEL's release signing key (signify / Ed25519). The private key is a GitHub Actions secret.
-	releasePublicKeyBase64 = "RWSswUzFB50TwoE6soP9FjoDu5T3PsfkiPeWRukMTjyen7mma+RBTaXR"
+	releasePublicKeyBase64 = "RWQRDpzpNh/WzVM7eN1I0qLilEkCJSwZAys/y774eR4AvHZp+0cjn8Su"
 	// Updates come from the latest GitHub release of cfbtel/cfbtel-vpn-windows
 	// (latest.sig lists each MSI's BLAKE2b-256 hash and is signed with the key above).
 	updateServerHost     = "github.com"

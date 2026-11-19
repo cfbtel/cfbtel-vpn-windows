@@ -9,6 +9,7 @@ name: Build and release CFBTEL VPN for Windows
 # Secrets: CFBTEL_RELEASE_KEY (releasesign private key), CFBTEL_PORTAL_URL (https://<staff VPN page host>),
 #          CFBTEL_CODESIGN_PFX (base64 of the .pfx), CFBTEL_CODESIGN_PASSWORD.
 # Actions are pinned to commit SHAs (organization policy).
+# Release key: made with tools/releasesign (or cfbtel-release-keygen.html); public key in updater/constants.go.
 
 on:
   push:
