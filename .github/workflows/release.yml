@@ -47,7 +47,6 @@ jobs:
           exit 0
 
       - name: Release key matches the app
-        if: steps.v.outputs.exists == 'false'
         shell: pwsh
         env:
           CFBTEL_RELEASE_KEY: ${{ secrets.CFBTEL_RELEASE_KEY }}
