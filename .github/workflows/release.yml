@@ -46,6 +46,20 @@ jobs:
           if (-not $env:CFBTEL_PORTAL_URL) { Write-Host "::warning::CFBTEL_PORTAL_URL secret is not set: Sign in won't know the staff VPN page." }
           exit 0
 
+      - name: Release key matches the app
+        if: steps.v.outputs.exists == 'false'
+        shell: pwsh
+        env:
+          CFBTEL_RELEASE_KEY: ${{ secrets.CFBTEL_RELEASE_KEY }}
+        run: |
+          if (-not $env:CFBTEL_RELEASE_KEY) { throw "CFBTEL_RELEASE_KEY secret is not set" }
+          $pub = (& go run ./tools/releasesign pubkey).Trim()
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          $inApp = (Select-String -Path updater/constants.go -Pattern 'releasePublicKeyBase64\s*=\s*"([^"]+)"').Matches[0].Groups[1].Value
+          Write-Host "Release public key (secret): $pub"
+          Write-Host "Release public key (app):    $inApp"
+          if ($pub -ne $inApp) { throw "The CFBTEL_RELEASE_KEY secret doesn't match updater/constants.go. Put the public key above into updater/constants.go." }
+
       - name: Code-signing certificate
         id: cert
         if: steps.v.outputs.exists == 'false'

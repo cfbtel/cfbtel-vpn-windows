@@ -5,6 +5,7 @@
  *   releasesign keygen              prints a new public key (for updater/constants.go) and private key (GitHub secret)
  *   releasesign sign OUT FILE...    writes OUT: BLAKE2b-256 hashes of FILEs, signed with $CFBTEL_RELEASE_KEY
  *   releasesign verify SIG PUBKEY   checks a signature file against a public key
+ *   releasesign pubkey              prints the public key of $CFBTEL_RELEASE_KEY
  */
 
 package main
@@ -120,7 +121,20 @@ func verify(sigPath, pub64 string) {
 	fmt.Print(string(lines[2]))
 }
 
+func pubkey() {
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(os.Getenv("CFBTEL_RELEASE_KEY")))
+	if err != nil || len(raw) != 10+ed25519.PrivateKeySize || raw[0] != 'E' || raw[1] != 'd' {
+		die(errors.New("CFBTEL_RELEASE_KEY is missing or not a releasesign private key"))
+	}
+	pub := ed25519.PrivateKey(raw[10:]).Public().(ed25519.PublicKey)
+	fmt.Println(base64.StdEncoding.EncodeToString(append(append([]byte{}, raw[:10]...), pub...)))
+}
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "pubkey" {
+		pubkey()
+		return
+	}
 	if len(os.Args) == 1 && runtime.GOOS == "windows" {
 		keygenClipboard() // double-clicked
 		return
