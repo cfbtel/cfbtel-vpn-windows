@@ -54,7 +54,7 @@ func NewTray(mtw *ManageTunnelsWindow) (*Tray, error) {
 func (tray *Tray) setup() error {
 	tray.clicked = tray.onManageTunnels
 
-	tray.SetToolTip(l18n.Sprintf("WireGuard: Deactivated"))
+	tray.SetToolTip(l18n.Sprintf("CFBTEL VPN: Deactivated"))
 	tray.SetVisible(true)
 	if icon, err := loadLogoIcon(16); err == nil {
 		tray.SetIcon(icon)
@@ -82,9 +82,10 @@ func (tray *Tray) setup() error {
 		{separator: true},
 		{separator: true},
 		{label: l18n.Sprintf("&Manage tunnels…"), handler: tray.onManageTunnels, enabled: true, defawlt: true},
+		{label: l18n.Sprintf("&Sign in to CFBTEL…"), handler: tray.onSignIn, enabled: true, hidden: !IsAdmin},
 		{label: l18n.Sprintf("&Import tunnel(s) from file…"), handler: tray.onImport, enabled: true, hidden: !IsAdmin},
 		{separator: true},
-		{label: l18n.Sprintf("&About WireGuard…"), handler: tray.onAbout, enabled: true},
+		{label: l18n.Sprintf("&About CFBTEL VPN…"), handler: tray.onAbout, enabled: true},
 		{label: l18n.Sprintf("E&xit"), handler: onQuit, enabled: true, hidden: !IsAdmin},
 	} {
 		var action *walk.Action
@@ -263,18 +264,18 @@ func (tray *Tray) onTunnelChange(tunnel *manager.Tunnel, state, globalState mana
 				case manager.TunnelStarted:
 					if !wasChecked {
 						icon, _ := iconWithOverlayForState(state, 128)
-						tray.ShowCustom(l18n.Sprintf("WireGuard Activated"), l18n.Sprintf("The %s tunnel has been activated.", tunnel.Name), icon)
+						tray.ShowCustom(l18n.Sprintf("CFBTEL VPN Activated"), l18n.Sprintf("The %s tunnel has been activated.", tunnel.Name), icon)
 					}
 
 				case manager.TunnelStopped:
 					if wasChecked {
 						icon, _ := loadSystemIcon("imageres", -31, 128) // TODO: this icon isn't very good...
-						tray.ShowCustom(l18n.Sprintf("WireGuard Deactivated"), l18n.Sprintf("The %s tunnel has been deactivated.", tunnel.Name), icon)
+						tray.ShowCustom(l18n.Sprintf("CFBTEL VPN Deactivated"), l18n.Sprintf("The %s tunnel has been deactivated.", tunnel.Name), icon)
 					}
 				}
 			}
 		} else if !tray.mtw.Visible() {
-			tray.ShowError(l18n.Sprintf("WireGuard Tunnel Error"), err.Error())
+			tray.ShowError(l18n.Sprintf("CFBTEL VPN Tunnel Error"), err.Error())
 		}
 		tray.setTunnelState(tunnel, state)
 	})
@@ -288,7 +289,7 @@ func (tray *Tray) updateGlobalState(globalState manager.TunnelState) {
 	actions := tray.ContextMenu().Actions()
 	statusAction := actions.At(0)
 
-	tray.SetToolTip(l18n.Sprintf("WireGuard: %s", textForState(globalState, true)))
+	tray.SetToolTip(l18n.Sprintf("CFBTEL VPN: %s", textForState(globalState, true)))
 	stateText := textForState(globalState, false)
 	stateIcon, err := iconForState(globalState, 16)
 	if err == nil {
@@ -359,7 +360,7 @@ func (tray *Tray) UpdateFound() {
 
 	showUpdateBalloon := func() {
 		icon, _ := loadShieldIcon(128)
-		tray.ShowCustom(l18n.Sprintf("WireGuard Update Available"), l18n.Sprintf("An update to WireGuard is now available. You are advised to update as soon as possible."), icon)
+		tray.ShowCustom(l18n.Sprintf("CFBTEL VPN Update Available"), l18n.Sprintf("An update to CFBTEL VPN is now available. You are advised to update as soon as possible."), icon)
 	}
 
 	timeSinceStart := time.Now().Sub(startTime)
@@ -384,6 +385,11 @@ func (tray *Tray) onAbout() {
 	} else {
 		onAbout(nil)
 	}
+}
+
+func (tray *Tray) onSignIn() {
+	raise(tray.mtw.Handle())
+	onSignIn(tray.mtw)
 }
 
 func (tray *Tray) onImport() {

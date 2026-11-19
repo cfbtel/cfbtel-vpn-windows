@@ -35,6 +35,10 @@ func prn() *message.Printer {
 
 // lang returns the user preferred UI language we have most confident translation in the default catalog available.
 func lang() (tag language.Tag) {
+	// CFBTEL VPN: English only (the bundled translations name the upstream product).
+	if true {
+		return language.English
+	}
 	tag = language.English
 	confidence := language.No
 	languages, err := windows.GetUserPreferredUILanguages(windows.MUI_LANGUAGE_NAME)

@@ -1,0 +1,102 @@
+name: Build and release CFBTEL VPN for Windows
+
+# Publishing = change Number in version/version.go on main and push (or run this workflow by hand).
+# Builds x86/amd64/arm64 on Windows, signs the programs and MSIs with CFBTEL's code-signing certificate,
+# signs latest.sig with CFBTEL's release key, and creates GitHub release vX.Y.Z.
+# The app's updater reads releases/latest/download/latest.sig, so only the latest full release is offered.
+# Without the code-signing secrets the build is published as a pre-release (installs fine, no auto-update).
+#
+# Secrets: CFBTEL_RELEASE_KEY (releasesign private key), CFBTEL_PORTAL_URL (https://<staff VPN page host>),
+#          CFBTEL_CODESIGN_PFX (base64 of the .pfx), CFBTEL_CODESIGN_PASSWORD.
+# Actions are pinned to commit SHAs (organization policy).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - version/version.go
+      - .github/workflows/release.yml
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+      CFBTEL_PORTAL_URL: ${{ secrets.CFBTEL_PORTAL_URL }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Version
+        id: v
+        shell: pwsh
+        run: |
+          $n = (Select-String -Path version/version.go -Pattern 'Number\s*=\s*"([0-9.]+)"').Matches[0].Groups[1].Value
+          "number=$n" >> $env:GITHUB_OUTPUT
+          gh release view "v$n" --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) { "exists=true" >> $env:GITHUB_OUTPUT; Write-Host "Release v$n exists: nothing to do." } else { "exists=false" >> $env:GITHUB_OUTPUT }
+          if (-not $env:CFBTEL_PORTAL_URL) { Write-Host "::warning::CFBTEL_PORTAL_URL secret is not set: Sign in won't know the staff VPN page." }
+
+      - name: Code-signing certificate
+        id: cert
+        if: steps.v.outputs.exists == 'false'
+        shell: pwsh
+        env:
+          PFX: ${{ secrets.CFBTEL_CODESIGN_PFX }}
+          PFX_PASSWORD: ${{ secrets.CFBTEL_CODESIGN_PASSWORD }}
+        run: |
+          if (-not $env:PFX) { "signed=false" >> $env:GITHUB_OUTPUT; Write-Host "::warning::No code-signing certificate: publishing an unsigned pre-release."; exit 0 }
+          $path = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
+          [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX))
+          $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($path, $env:PFX_PASSWORD)
+          $cn = $cert.GetNameInfo([System.Security.Cryptography.X509Certificates.X509NameType]::SimpleName, $false)
+          Write-Host "Signing as: $cn (expires $($cert.NotAfter))"
+          "CFBTEL_SIGNER=$cn" >> $env:GITHUB_ENV
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          # build.bat and installer\build.bat call sign.bat, which sets the signing options.
+          "@set SigningProvider=/f `"$path`" /p `"%CFBTEL_CODESIGN_PASSWORD%`"`r`n@set TimestampServer=http://timestamp.digicert.com`r`n@set PATH=$($signtool.DirectoryName);%PATH%" | Set-Content -Encoding ascii sign.bat
+          "signed=true" >> $env:GITHUB_OUTPUT
+
+      - name: Build programs
+        if: steps.v.outputs.exists == 'false'
+        shell: cmd
+        env:
+          CFBTEL_CODESIGN_PASSWORD: ${{ secrets.CFBTEL_CODESIGN_PASSWORD }}
+        run: call build.bat
+
+      - name: Build installers
+        if: steps.v.outputs.exists == 'false'
+        shell: cmd
+        env:
+          CFBTEL_CODESIGN_PASSWORD: ${{ secrets.CFBTEL_CODESIGN_PASSWORD }}
+        run: call installer\build.bat
+
+      - name: Sign the update list
+        if: steps.v.outputs.exists == 'false'
+        shell: pwsh
+        env:
+          CFBTEL_RELEASE_KEY: ${{ secrets.CFBTEL_RELEASE_KEY }}
+        run: |
+          if (-not $env:CFBTEL_RELEASE_KEY) { throw "CFBTEL_RELEASE_KEY secret is not set" }
+          $env:GOROOT = "$PWD\.deps"; $env:GOOS = "windows"
+          & .\.deps\bin\go.exe run ./tools/releasesign sign installer\dist\latest.sig (Get-ChildItem installer\dist\cfbtelvpn-*.msi).FullName
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          Get-Content installer\dist\latest.sig | Select-Object -Skip 2
+
+      - name: Publish release
+        if: steps.v.outputs.exists == 'false'
+        shell: pwsh
+        run: |
+          $n = "${{ steps.v.outputs.number }}"
+          $files = (Get-ChildItem installer\dist\cfbtelvpn-*.msi).FullName + "installer\dist\latest.sig"
+          $notes = "CFBTEL VPN for Windows $n (based on WireGuard for Windows 1.1.1).`n`nDownload **cfbtelvpn-amd64-$n.msi** for most PCs (arm64 for ARM PCs). Installed copies update themselves."
+          $extra = @()
+          if ("${{ steps.cert.outputs.signed }}" -ne "true") { $extra += "--prerelease"; $notes += "`n`n> Unsigned test build: Windows SmartScreen will warn, and automatic updates are off." }
+          gh release create "v$n" @files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "CFBTEL VPN $n" --notes $notes @extra

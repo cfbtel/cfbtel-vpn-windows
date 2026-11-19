@@ -185,7 +185,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	// #1 Permit outbound IPv4 traffic.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("Permit unrestricted outbound traffic for WireGuard service (IPv4)", "")
+		displayData, err := createWtFwpmDisplayData0("Permit unrestricted outbound traffic for CFBTEL VPN service (IPv4)", "")
 		if err != nil {
 			return wrapErr(err)
 		}
@@ -203,7 +203,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	// #2 Permit inbound IPv4 traffic.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("Permit unrestricted inbound traffic for WireGuard service (IPv4)", "")
+		displayData, err := createWtFwpmDisplayData0("Permit unrestricted inbound traffic for CFBTEL VPN service (IPv4)", "")
 		if err != nil {
 			return wrapErr(err)
 		}
@@ -221,7 +221,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	// #3 Permit outbound IPv6 traffic.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("Permit unrestricted outbound traffic for WireGuard service (IPv6)", "")
+		displayData, err := createWtFwpmDisplayData0("Permit unrestricted outbound traffic for CFBTEL VPN service (IPv6)", "")
 		if err != nil {
 			return wrapErr(err)
 		}
@@ -239,7 +239,7 @@ func permitWireGuardService(session uintptr, baseObjects *baseObjects, weight ui
 	// #4 Permit inbound IPv6 traffic.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("Permit unrestricted inbound traffic for WireGuard service (IPv6)", "")
+		displayData, err := createWtFwpmDisplayData0("Permit unrestricted inbound traffic for CFBTEL VPN service (IPv6)", "")
 		if err != nil {
 			return wrapErr(err)
 		}

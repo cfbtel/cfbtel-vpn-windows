@@ -11,7 +11,7 @@ import (
 	"golang.org/x/sys/windows/registry"
 )
 
-const adminRegKey = `Software\WireGuard`
+const adminRegKey = `Software\CFBTEL\VPN`
 
 var (
 	adminKey     registry.Key

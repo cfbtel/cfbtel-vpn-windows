@@ -14,8 +14,12 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+// officialCommonName is the code-signing certificate's name; set at build time:
+// -ldflags "-X golang.zx2c4.com/wireguard/windows/version.officialCommonName=<CN>".
+// Updates are only offered to builds signed with that certificate.
+var officialCommonName = "CFBTEL"
+
 const (
-	officialCommonName = "WireGuard LLC"
 	evPolicyOid        = "2.23.140.1.3"
 	policyExtensionOid = "2.5.29.32"
 )

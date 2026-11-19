@@ -24,7 +24,7 @@ type baseObjects struct {
 var wfpSession uintptr
 
 func createWfpSession() (uintptr, error) {
-	sessionDisplayData, err := createWtFwpmDisplayData0("WireGuard", "WireGuard dynamic session")
+	sessionDisplayData, err := createWtFwpmDisplayData0("CFBTEL VPN", "CFBTEL VPN dynamic session")
 	if err != nil {
 		return 0, wrapErr(err)
 	}
@@ -61,7 +61,7 @@ func registerBaseObjects(session uintptr) (*baseObjects, error) {
 	// Register provider.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("WireGuard", "WireGuard provider")
+		displayData, err := createWtFwpmDisplayData0("CFBTEL VPN", "CFBTEL VPN provider")
 		if err != nil {
 			return nil, wrapErr(err)
 		}
@@ -80,7 +80,7 @@ func registerBaseObjects(session uintptr) (*baseObjects, error) {
 	// Register filters sublayer.
 	//
 	{
-		displayData, err := createWtFwpmDisplayData0("WireGuard filters", "Permissive and blocking filters")
+		displayData, err := createWtFwpmDisplayData0("CFBTEL VPN filters", "Permissive and blocking filters")
 		if err != nil {
 			return nil, wrapErr(err)
 		}

@@ -1,46 +1,51 @@
-# [WireGuard](https://www.wireguard.com/) for Windows
+# CFBTEL VPN for Windows
 
-This is a fully-featured WireGuard client for Windows that uses [WireGuardNT](https://git.zx2c4.com/wireguard-nt/about/). It is the only official and recommended way of using WireGuard on Windows.
+CFBTEL's branded VPN client for Windows, built on the official
+[WireGuard® for Windows](https://git.zx2c4.com/wireguard-windows) 1.1.1 (WireGuardNT kernel driver, same tunnel
+engine and security). "WireGuard" is a registered trademark of Jason A. Donenfeld; this is an independent build by
+CFBTEL and is not endorsed by the WireGuard project.
 
-## Download &amp; Install
+What's different from upstream:
 
-If you've come here looking to simply run WireGuard for Windows, [the main download page has links](https://www.wireguard.com/install/). There you will find two things:
+* **CFBTEL VPN** name, icon and installer, installed side by side with WireGuard if present
+  (own services `CFBTELVPNManager` / `CFBTELVPNTunnel$<name>`, folder `Program Files\CFBTEL VPN`,
+  registry `HKLM\Software\CFBTEL\VPN`, MSI upgrade codes).
+* **Sign in to CFBTEL** (toolbar, tray menu, empty window): the app makes its own key pair, opens the staff VPN page
+  in the browser, the person signs in (Microsoft 365 or email and password) and picks the office, and the tunnel is
+  added and turned on. The private key never leaves the computer. Server side: AdmixCentral `/vpn/app`.
+* **Updates from CFBTEL**: the built-in updater reads `latest.sig` from the latest release of this repository,
+  verifies it with CFBTEL's release key (Ed25519, signify format) and the MSI's BLAKE2b hash, and only runs on
+  builds signed with CFBTEL's code-signing certificate.
+* English UI.
 
-- [The WireGuard Installer](https://download.wireguard.com/windows-client/wireguard-installer.exe) &ndash; This selects the most recent version for your architecture, downloads it, checks signatures and hashes, and installs it.
-- [Standalone MSIs](https://download.wireguard.com/windows-client/) &ndash; These are for system admins who wish to deploy the MSIs directly. For most end users, the ordinary installer takes care of downloading these automatically.
+## Releasing
 
-## Documentation
+1. Raise `Number` in `version/version.go` (e.g. `1.0.1`) and push to `main`.
+2. The **Build and release** workflow builds x86/amd64/arm64, signs programs and MSIs, writes `latest.sig` and
+   publishes release `v1.0.1`. Installed copies offer the update (tray notification, Update tab).
 
-In addition to this [`README.md`](README.md), the following documents are also available:
+Repository secrets (Settings → Secrets and variables → Actions):
 
-- [`adminregistry.md`](docs/adminregistry.md) &ndash; A list of registry keys settable by the system administrator for changing the behavior of the application.
-- [`attacksurface.md`](docs/attacksurface.md) &ndash; A discussion of the various components from a security perspective, so that future auditors of this code have a head start in assessing its security design.
-- [`buildrun.md`](docs/buildrun.md) &ndash; Instructions on building, localizing, running, and developing for this repository.
-- [`enterprise.md`](docs/enterprise.md) &ndash; A summary of various features and tips for making the application usable in enterprise settings.
-- [`netquirk.md`](docs/netquirk.md) &ndash; A description of various networking quirks and "kill-switch" semantics.
+| Secret | What |
+|---|---|
+| `CFBTEL_RELEASE_KEY` | private key from `go run ./tools/releasesign keygen` (public key is in `updater/constants.go`) |
+| `CFBTEL_PORTAL_URL` | `https://<staff VPN page host>`; kept out of the source |
+| `CFBTEL_CODESIGN_PFX` | base64 of the code-signing `.pfx` |
+| `CFBTEL_CODESIGN_PASSWORD` | its password |
+
+Without the code-signing secrets the release is an unsigned pre-release: it installs (SmartScreen warns) but
+doesn't update itself.
+
+## Building locally
+
+Linux: `make amd64/cfbtelvpn.exe` (needs mingw-w64, ImageMagick, bsdtar). Windows: `build.bat`, then
+`installer\build.bat` for the MSIs. See the upstream instructions below for details.
+
+## Rebasing on a new WireGuard for Windows
+
+`git fetch https://git.zx2c4.com/wireguard-windows --tags && git rebase <new tag>` (or merge), keep the CFBTEL
+changes, rebuild, bump `version/version.go`.
 
 ## License
 
-This repository is MIT-licensed.
-
-```text
-Copyright (C) 2018-2026 WireGuard LLC. All Rights Reserved.
-
-Permission is hereby granted, free of charge, to any person obtaining a
-copy of this software and associated documentation files (the "Software"),
-to deal in the Software without restriction, including without limitation
-the rights to use, copy, modify, merge, publish, distribute, sublicense,
-and/or sell copies of the Software, and to permit persons to whom the
-Software is furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
-FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-```
+MIT (see `COPYING`), like upstream; the installer definition is GPL-2.0 as upstream.

@@ -67,7 +67,7 @@ func WaitForRaiseUIThenQuit() {
 		return 0
 	}, 0, 0, win.WINEVENT_SKIPOWNPROCESS|win.WINEVENT_OUTOFCONTEXT)
 	if err != nil {
-		showErrorCustom(nil, l18n.Sprintf("WireGuard Detection Error"), l18n.Sprintf("Unable to wait for WireGuard window to appear: %v", err))
+		showErrorCustom(nil, l18n.Sprintf("CFBTEL VPN Detection Error"), l18n.Sprintf("Unable to wait for CFBTEL VPN window to appear: %v", err))
 		os.Exit(1)
 	}
 	for {

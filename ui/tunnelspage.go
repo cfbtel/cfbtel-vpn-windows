@@ -147,12 +147,18 @@ func (tp *TunnelsPage) CreateToolbar() error {
 		return err
 	}
 	tp.AddDisposable(addMenu)
+	signInAction := walk.NewAction()
+	signInAction.SetText(l18n.Sprintf("&Sign in to CFBTEL…"))
+	signInActionIcon, _ := loadSystemIcon("imageres", -1029, 16)
+	signInAction.SetImage(signInActionIcon)
+	signInAction.SetDefault(true)
+	signInAction.Triggered().Attach(func() { onSignIn(tp.Form()) })
+	addMenu.Actions().Add(signInAction)
 	importAction := walk.NewAction()
 	importAction.SetText(l18n.Sprintf("&Import tunnel(s) from file…"))
 	importActionIcon, _ := loadSystemIcon("imageres", -3, 16)
 	importAction.SetImage(importActionIcon)
 	importAction.SetShortcut(walk.Shortcut{walk.ModControl, walk.KeyO})
-	importAction.SetDefault(true)
 	importAction.Triggered().Attach(tp.onImport)
 	addMenu.Actions().Add(importAction)
 	addAction := walk.NewAction()
@@ -166,8 +172,8 @@ func (tp *TunnelsPage) CreateToolbar() error {
 	addMenuActionIcon, _ := loadSystemIcon("shell32", -258, 16)
 	addMenuAction.SetImage(addMenuActionIcon)
 	addMenuAction.SetText(l18n.Sprintf("Add Tunnel"))
-	addMenuAction.SetToolTip(importAction.Text())
-	addMenuAction.Triggered().Attach(tp.onImport)
+	addMenuAction.SetToolTip(signInAction.Text())
+	addMenuAction.Triggered().Attach(func() { onSignIn(tp.Form()) })
 	tp.listToolbar.Actions().Add(addMenuAction)
 
 	tp.listToolbar.Actions().Add(walk.NewSeparatorAction())
@@ -593,8 +599,8 @@ func (tp *TunnelsPage) swapFiller(enabled bool) bool {
 
 func (tp *TunnelsPage) onTunnelsChanged() {
 	if tp.swapFiller(tp.listView.model.RowCount() == 0) {
-		tp.fillerButton.SetText(l18n.Sprintf("Import tunnel(s) from file"))
-		tp.fillerHandler = tp.onImport
+		tp.fillerButton.SetText(l18n.Sprintf("Sign in to CFBTEL VPN"))
+		tp.fillerHandler = func() { onSignIn(tp.Form()) }
 	}
 }
 

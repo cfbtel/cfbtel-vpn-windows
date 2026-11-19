@@ -6,12 +6,15 @@
 package updater
 
 const (
-	releasePublicKeyBase64 = "RWRNqGKtBXftKTKPpBPGDMe8jHLnFQ0EdRy8Wg0apV6vTDFLAODD83G4"
-	updateServerHost       = "download.wireguard.com"
-	updateServerPort       = 443
-	updateServerUseHttps   = true
-	latestVersionPath      = "/windows-client/latest.sig"
-	msiPath                = "/windows-client/%s"
-	msiArchPrefix          = "wireguard-%s-"
+	// CFBTEL's release signing key (signify / Ed25519). The private key is a GitHub Actions secret.
+	releasePublicKeyBase64 = "RWSswUzFB50TwoE6soP9FjoDu5T3PsfkiPeWRukMTjyen7mma+RBTaXR"
+	// Updates come from the latest GitHub release of cfbtel/cfbtel-vpn-windows
+	// (latest.sig lists each MSI's BLAKE2b-256 hash and is signed with the key above).
+	updateServerHost     = "github.com"
+	updateServerPort     = 443
+	updateServerUseHttps = true
+	latestVersionPath    = "/cfbtel/cfbtel-vpn-windows/releases/latest/download/latest.sig"
+	msiPath              = "/cfbtel/cfbtel-vpn-windows/releases/latest/download/%s"
+	msiArchPrefix        = "cfbtelvpn-%s-"
 	msiSuffix              = ".msi"
 )

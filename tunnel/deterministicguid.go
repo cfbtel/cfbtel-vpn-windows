@@ -20,8 +20,8 @@ import (
 )
 
 const (
-	deterministicGUIDLabel = "Deterministic WireGuard Windows GUID v1 jason@zx2c4.com"
-	fixedGUIDLabel         = "Fixed WireGuard Windows GUID v1 jason@zx2c4.com"
+	deterministicGUIDLabel = "Deterministic CFBTEL VPN Windows GUID v1"
+	fixedGUIDLabel         = "Fixed CFBTEL VPN Windows GUID v1"
 )
 
 // Escape hatch for external consumers, not us.

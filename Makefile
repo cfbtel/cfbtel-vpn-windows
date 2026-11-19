@@ -1,4 +1,5 @@
-GOFLAGS := -tags load_wgnt_from_rsrc -ldflags="-H windowsgui -s -w" -trimpath -buildvcs=false -v
+CFBTEL_SIGNER ?= CFBTEL
+GOFLAGS := -tags load_wgnt_from_rsrc -ldflags="-H windowsgui -s -w -X 'golang.zx2c4.com/wireguard/windows/version.officialCommonName=$(CFBTEL_SIGNER)' -X 'golang.zx2c4.com/wireguard/windows/ui.portalURL=$(CFBTEL_PORTAL_URL)'" -trimpath -buildvcs=false -v
 export GOOS := windows
 export PATH := $(CURDIR)/.deps/go/bin:$(PATH)
 
@@ -16,7 +17,7 @@ DEPLOYMENT_HOST ?= winvm
 DEPLOYMENT_ARCH ?= amd64
 DEPLOYMENT_PATH ?= Desktop
 
-all: amd64/wireguard.exe x86/wireguard.exe arm64/wireguard.exe
+all: amd64/cfbtelvpn.exe x86/cfbtelvpn.exe arm64/cfbtelvpn.exe
 
 define download =
 .distfiles/$(1):
@@ -54,16 +55,16 @@ resources_386.syso: $(RESOURCE_FILES)
 resources_arm64.syso: $(RESOURCE_FILES)
 	aarch64-w64-mingw32-windres $(RCFLAGS) -I .deps/wireguard-nt/bin/arm64 -i $< -o $@
 
-amd64/wireguard.exe: export GOARCH := amd64
-amd64/wireguard.exe: resources_amd64.syso $(SOURCE_FILES)
+amd64/cfbtelvpn.exe: export GOARCH := amd64
+amd64/cfbtelvpn.exe: resources_amd64.syso $(SOURCE_FILES)
 	go build $(GOFLAGS) -o $@
 
-x86/wireguard.exe: export GOARCH := 386
-x86/wireguard.exe: resources_386.syso $(SOURCE_FILES)
+x86/cfbtelvpn.exe: export GOARCH := 386
+x86/cfbtelvpn.exe: resources_386.syso $(SOURCE_FILES)
 	go build $(GOFLAGS) -o $@
 
-arm64/wireguard.exe: export GOARCH := arm64
-arm64/wireguard.exe: resources_arm64.syso $(SOURCE_FILES)
+arm64/cfbtelvpn.exe: export GOARCH := arm64
+arm64/cfbtelvpn.exe: resources_arm64.syso $(SOURCE_FILES)
 	go build $(GOFLAGS) -o $@
 
 remaster: export GOARCH := amd64
@@ -89,8 +90,8 @@ crowdin:
 	find locales -name messages.gotext.json -exec bash -c '[[ $$(jq ".messages | length" {}) -ne 0 ]] || rm -rf "$$(dirname {})"' \;
 	@$(MAKE) --no-print-directory generate
 
-deploy: $(DEPLOYMENT_ARCH)/wireguard.exe
-	-ssh $(DEPLOYMENT_HOST) -- 'taskkill /im wireguard.exe /f'
+deploy: $(DEPLOYMENT_ARCH)/cfbtelvpn.exe
+	-ssh $(DEPLOYMENT_HOST) -- 'taskkill /im cfbtelvpn.exe /f'
 	scp $< $(DEPLOYMENT_HOST):$(DEPLOYMENT_PATH)
 
 clean:
