@@ -44,6 +44,7 @@ jobs:
           gh release view "v$n" --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) { "exists=true" >> $env:GITHUB_OUTPUT; Write-Host "Release v$n exists: nothing to do." } else { "exists=false" >> $env:GITHUB_OUTPUT }
           if (-not $env:CFBTEL_PORTAL_URL) { Write-Host "::warning::CFBTEL_PORTAL_URL secret is not set: Sign in won't know the staff VPN page." }
+          exit 0
 
       - name: Code-signing certificate
         id: cert
