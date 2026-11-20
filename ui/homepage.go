@@ -164,7 +164,7 @@ func NewHomePage() (*HomePage, error) {
 		}
 	}
 
-	// The view scrolls when "More details" makes it taller than the window; the footer stays at the bottom.
+	// The view scrolls only if many offices make it taller than the window; the footer stays at the bottom.
 	if hp.scroll, err = walk.NewScrollView(hp); err != nil {
 		return nil, err
 	}
@@ -651,8 +651,7 @@ const (
 	hGraph      = 100
 	hRates      = 26
 	hPill       = 32
-	hDetailRow  = 24
-	nDetails    = 5
+	nDetails    = 5 // "More details" shows these rows where the graph is, so the card never changes height
 	hCardPad    = 18
 	hOfficesGap = 20
 	hOfficeRow  = 44
@@ -697,9 +696,6 @@ func (hp *HomePage) cardHeight(st homeState) int {
 	h := hCardTop + hButton + hCardPad
 	if st.live {
 		h += 20 + hGraph + 14 + hRates + 14 + hPill
-		if hp.details {
-			h += 12 + nDetails*hDetailRow
-		}
 	}
 	return h
 }
@@ -776,7 +772,9 @@ func (p painter) text(s string, font *walk.Font, color walk.Color, r walk.Rectan
 }
 
 func (p painter) textWidth(s string, font *walk.Font) int {
-	r, _, err := p.c.MeasureTextPixels(s, font, walk.Rectangle{Width: p.s(1000), Height: p.s(100)}, walk.TextSingleLine|walk.TextNoPrefix)
+	// TextCalcRect makes Windows return the text's real width; without it walk hands back the whole bounds, which
+	// made the "More details" button as wide as the window and squeezed office names out of their rows.
+	r, _, err := p.c.MeasureTextPixels(s, font, walk.Rectangle{Width: p.s(1000), Height: p.s(100)}, walk.TextCalcRect|walk.TextSingleLine|walk.TextNoPrefix)
 	if err != nil {
 		return 0
 	}
@@ -926,7 +924,12 @@ func (hp *HomePage) paint(canvas *walk.Canvas, _ walk.Rectangle) error {
 
 	if st.live {
 		y := btn.Y + btn.Height + s(20)
-		hp.paintGraph(p, walk.Rectangle{X: in.X, Y: y, Width: in.Width, Height: s(hGraph)}, st.history)
+		// "More details" swaps the graph for the details in the same space, so nothing below moves.
+		if hp.details {
+			hp.paintDetails(p, walk.Rectangle{X: in.X, Y: y, Width: in.Width, Height: s(hGraph)}, st)
+		} else {
+			hp.paintGraph(p, walk.Rectangle{X: in.X, Y: y, Width: in.Width, Height: s(hGraph)}, st.history)
+		}
 		y += s(hGraph) + s(14)
 
 		// Speeds now and the last handshake.
@@ -950,7 +953,7 @@ func (hp *HomePage) paint(canvas *walk.Canvas, _ walk.Rectangle) error {
 		// More details.
 		pillText := l18n.Sprintf("More details")
 		if hp.details {
-			pillText = l18n.Sprintf("Fewer details")
+			pillText = l18n.Sprintf("Show graph")
 		}
 		pw := p.textWidth(pillText, hp.fonts["pill"]) + s(36)
 		pill := walk.Rectangle{X: in.X + (in.Width-pw)/2, Y: y, Width: pw, Height: s(hPill)}
@@ -961,33 +964,6 @@ func (hp *HomePage) paint(canvas *walk.Canvas, _ walk.Rectangle) error {
 		p.outline(darkGrid, 1, pill, hPill)
 		p.text(pillText, hp.fonts["pill"], darkText, pill, walk.TextCenter|walk.TextVCenter)
 		y += s(hPill)
-
-		if hp.details {
-			y += s(12)
-			since := ""
-			if !st.since.IsZero() {
-				since = st.since.Format("3:04 PM") + " (" + shortDuration(time.Since(st.since)) + ")"
-			}
-			rows := [][2]string{
-				{l18n.Sprintf("Received in total"), st.rx},
-				{l18n.Sprintf("Sent in total"), st.tx},
-				{l18n.Sprintf("Connected since"), since},
-				{l18n.Sprintf("Your VPN address"), st.addr},
-				{l18n.Sprintf("Office address"), st.endpoint},
-			}
-			for i, r := range rows {
-				ry := y + i*s(hDetailRow)
-				if i > 0 {
-					p.line(darkLine, 1, walk.PenSolid, walk.Point{X: in.X, Y: ry}, walk.Point{X: in.X + in.Width, Y: ry})
-				}
-				p.text(r[0], hp.fonts["label"], darkText3, walk.Rectangle{X: in.X, Y: ry, Width: in.Width / 2, Height: s(hDetailRow)}, walk.TextLeft|walk.TextVCenter)
-				v := r[1]
-				if v == "" {
-					v = "—"
-				}
-				p.text(v, hp.fonts["value"], darkText, walk.Rectangle{X: in.X + in.Width/2, Y: ry, Width: in.Width / 2, Height: s(hDetailRow)}, walk.TextRight|walk.TextVCenter)
-			}
-		}
 	}
 
 	// Your offices.
@@ -1040,6 +1016,35 @@ func (hp *HomePage) paint(canvas *walk.Canvas, _ walk.Rectangle) error {
 	}
 	hp.targets = targets
 	return nil
+}
+
+// paintDetails lists the connection's details where the graph usually is.
+func (hp *HomePage) paintDetails(p painter, r walk.Rectangle, st homeState) {
+	since := ""
+	if !st.since.IsZero() {
+		since = st.since.Format("3:04 PM") + " (" + shortDuration(time.Since(st.since)) + ")"
+	}
+	rows := [][2]string{
+		{l18n.Sprintf("Received in total"), st.rx},
+		{l18n.Sprintf("Sent in total"), st.tx},
+		{l18n.Sprintf("Connected since"), since},
+		{l18n.Sprintf("Your VPN address"), st.addr},
+		{l18n.Sprintf("Office address"), st.endpoint},
+	}
+	rh := r.Height / nDetails
+	for i, row := range rows {
+		ry := r.Y + i*rh
+		if i > 0 {
+			p.line(darkLine, 1, walk.PenSolid, walk.Point{X: r.X, Y: ry}, walk.Point{X: r.X + r.Width, Y: ry})
+		}
+		half := r.Width / 2
+		p.text(row[0], hp.fonts["label"], darkText3, walk.Rectangle{X: r.X, Y: ry, Width: half, Height: rh}, walk.TextLeft|walk.TextVCenter)
+		v := row[1]
+		if v == "" {
+			v = "—"
+		}
+		p.text(v, hp.fonts["value"], darkText, walk.Rectangle{X: r.X + half, Y: ry, Width: r.Width - half, Height: rh}, walk.TextRight|walk.TextVCenter)
+	}
 }
 
 // paintGraph draws the last minute of download (green) and upload (orange) on dashed guide lines.
