@@ -42,6 +42,6 @@ jobs:
           $n = (Select-String -Path version/version.go -Pattern 'Number\s*=\s*"([0-9.]+)"').Matches[0].Groups[1].Value
           foreach ($a in 'amd64','arm64','x86') {
             $f = "installer/dist/cfbtelvpn-$a-$n.msi"
-            if (-not (Test-Path $f)) { throw "Missing $f: the installer build failed (see the step above)." }
+            if (-not (Test-Path $f)) { throw "Missing ${f} - the installer build failed (see the step above)." }
             Write-Host "OK $f ($((Get-Item $f).Length) bytes)"
           }
