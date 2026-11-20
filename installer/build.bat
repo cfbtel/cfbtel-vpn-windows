@@ -15,6 +15,9 @@ set WIX_LIGHT_FLAGS=-nologo -spdb -ext WixUIExtension -cultures:en-us
 set WIX_LIGHT_FLAGS=%WIX_LIGHT_FLAGS% -sice:ICE39
 set WIX_LIGHT_FLAGS=%WIX_LIGHT_FLAGS% -sice:ICE61
 set WIX_LIGHT_FLAGS=%WIX_LIGHT_FLAGS% -sice:ICE03
+rem The desktop icon of this per-machine install goes on the Public desktop with an HKLM key path; ICE38, ICE43 and
+rem ICE57 assume DesktopFolder is per-user and reject that, so they're turned off.
+set WIX_LIGHT_FLAGS=%WIX_LIGHT_FLAGS% -sice:ICE38 -sice:ICE43 -sice:ICE57
 
 if exist .deps\prepared goto :build
 :installdeps
