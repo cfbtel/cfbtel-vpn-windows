@@ -127,12 +127,54 @@ func checkForAdminGroup() {
 		fatalf("Unable to open current process token: %v", err)
 	}
 	defer processToken.Close()
-	if !elevate.TokenIsElevatedOrElevatable(processToken) {
-		fatalf("CFBTEL VPN may only be used by users who are a member of the Builtin %s group.", elevate.AdminGroupName())
+	if elevate.TokenIsElevatedOrElevatable(processToken) {
+		return
 	}
+	if conf.StandardUsersAllowed() {
+		waitForStandardUserUI()
+		return
+	}
+	fatalf("CFBTEL VPN is turned off for standard users on this computer. Ask your IT administrator to turn it on, or to sign in with an administrator account.")
+}
+
+// waitForStandardUserUI: for people who aren't administrators, the CFBTEL VPN Manager service opens the app in
+// their Windows session by itself. Clicking the icon only needs to bring that window forward.
+func waitForStandardUserUI() {
+	for i := 0; i < 30; i++ {
+		if ui.RaiseUI() {
+			os.Exit(0)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	if managerServiceRunning() {
+		fatalf("CFBTEL VPN is running. Its icon is next to the clock (you may need to click ^ to see it). If it isn't there, sign out of Windows and sign back in.")
+	}
+	fatalf("CFBTEL VPN isn't running on this computer yet. Restart the computer. If that doesn't help, ask your IT administrator to open CFBTEL VPN once with an administrator account.")
+}
+
+func managerServiceRunning() bool {
+	scm, err := windows.OpenSCManager(nil, nil, windows.SC_MANAGER_CONNECT)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseServiceHandle(scm)
+	service, err := windows.OpenService(scm, windows.StringToUTF16Ptr("CFBTELVPNManager"), windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		return false
+	}
+	defer windows.CloseServiceHandle(service)
+	var status windows.SERVICE_STATUS
+	if windows.QueryServiceStatus(service, &status) != nil {
+		return false
+	}
+	return status.CurrentState == windows.SERVICE_RUNNING || status.CurrentState == windows.SERVICE_START_PENDING
 }
 
 func checkForAdminDesktop() {
+	if conf.StandardUsersAllowed() {
+		// The manager opens the app for standard users too, so a standard user's desktop is fine.
+		return
+	}
 	adminDesktop, err := elevate.IsAdminDesktop()
 	if !adminDesktop && err == nil {
 		fatalf("CFBTEL VPN is running, but the UI is only accessible from desktops of the Builtin %s group.", elevate.AdminGroupName())

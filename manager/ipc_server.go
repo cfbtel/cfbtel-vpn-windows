@@ -7,6 +7,8 @@ package manager
 
 import (
 	"bytes"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/gob"
 	"fmt"
 	"io"
@@ -20,6 +22,8 @@ import (
 	"golang.org/x/sys/windows/svc"
 
 	"golang.zx2c4.com/wireguard/windows/conf"
+	"golang.zx2c4.com/wireguard/windows/l18n"
+	"golang.zx2c4.com/wireguard/windows/portal"
 	"golang.zx2c4.com/wireguard/windows/updater"
 )
 
@@ -34,6 +38,82 @@ type ManagerService struct {
 	events        *os.File
 	eventLock     sync.Mutex
 	elevatedToken windows.Token
+
+	signInLock sync.Mutex
+	signIns    map[string]*pendingSignIn
+}
+
+type pendingSignIn struct {
+	key     *conf.Key
+	portal  string
+	expires time.Time
+}
+
+const (
+	signInLifetime   = 15 * time.Minute
+	maxPendingSignIn = 4
+)
+
+// SignInBegin makes the key pair for a Microsoft 365 sign-in. Standard users may call it: the tunnel they
+// end up with can only come from the CFBTEL VPN page (see SignInFinish).
+func (s *ManagerService) SignInBegin() (*SignInStart, error) {
+	base, err := portal.Base()
+	if err != nil {
+		return nil, err
+	}
+	key, err := conf.NewPrivateKey()
+	if err != nil {
+		return nil, err
+	}
+	b := make([]byte, 18)
+	if _, err := rand.Read(b); err != nil {
+		return nil, err
+	}
+	id := base64.RawURLEncoding.EncodeToString(b)
+
+	s.signInLock.Lock()
+	defer s.signInLock.Unlock()
+	if s.signIns == nil {
+		s.signIns = make(map[string]*pendingSignIn)
+	}
+	now := time.Now()
+	for k, p := range s.signIns {
+		if now.After(p.expires) {
+			delete(s.signIns, k)
+		}
+	}
+	if len(s.signIns) >= maxPendingSignIn {
+		return nil, fmt.Errorf("%s", l18n.Sprintf("A sign-in is already open in your browser. Finish it there, or wait a few minutes and try again."))
+	}
+	s.signIns[id] = &pendingSignIn{key: key, portal: base, expires: now.Add(signInLifetime)}
+	return &SignInStart{ID: id, PublicKey: key.Public().String(), Portal: base}, nil
+}
+
+// SignInFinish swaps the one-time code from the VPN page for the tunnel settings, here in the service, and
+// saves the tunnel. The UI never supplies the settings itself.
+func (s *ManagerService) SignInFinish(id, code, state string) (*Tunnel, error) {
+	s.signInLock.Lock()
+	p := s.signIns[id]
+	delete(s.signIns, id)
+	s.signInLock.Unlock()
+	if p == nil || time.Now().After(p.expires) {
+		return nil, fmt.Errorf("%s", l18n.Sprintf("The sign-in wasn't finished in time. Click Sign in to try again."))
+	}
+	answer, err := portal.Exchange(p.portal, code, state)
+	if err != nil {
+		return nil, err
+	}
+	names, _ := conf.ListConfigNames()
+	name := portal.UniqueName(answer.Name, names)
+	config, err := portal.Config(p.key, answer, name)
+	if err != nil {
+		return nil, err
+	}
+	if err := config.Save(false); err != nil {
+		return nil, err
+	}
+	log.Printf("Added tunnel ‘%s’ from a Microsoft 365 sign-in", name)
+	return &Tunnel{name}, nil
 }
 
 func (s *ManagerService) StoredConfig(tunnelName string) (*conf.Config, error) {
@@ -436,6 +516,36 @@ func (s *ManagerService) ServeConn(reader io.Reader, writer io.Writer) {
 			}
 		case UpdateMethodType:
 			s.Update()
+		case SignInBeginMethodType:
+			start, retErr := s.SignInBegin()
+			if start == nil {
+				start = &SignInStart{}
+			}
+			err = encoder.Encode(*start)
+			if err != nil {
+				return
+			}
+			err = encoder.Encode(errToString(retErr))
+			if err != nil {
+				return
+			}
+		case SignInFinishMethodType:
+			var id, code, state string
+			if decoder.Decode(&id) != nil || decoder.Decode(&code) != nil || decoder.Decode(&state) != nil {
+				return
+			}
+			tunnel, retErr := s.SignInFinish(id, code, state)
+			if tunnel == nil {
+				tunnel = &Tunnel{}
+			}
+			err = encoder.Encode(tunnel)
+			if err != nil {
+				return
+			}
+			err = encoder.Encode(errToString(retErr))
+			if err != nil {
+				return
+			}
 		default:
 			return
 		}

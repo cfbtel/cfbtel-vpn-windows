@@ -55,7 +55,17 @@ const (
 	QuitMethodType
 	UpdateStateMethodType
 	UpdateMethodType
+	SignInBeginMethodType
+	SignInFinishMethodType
 )
+
+// SignInStart is what the manager hands the UI to open the Microsoft 365 sign-in in the browser. The
+// private key stays in the manager service; only its public half goes to the VPN page.
+type SignInStart struct {
+	ID        string
+	PublicKey string
+	Portal    string
+}
 
 var (
 	rpcEncoder *gob.Encoder
@@ -524,4 +534,42 @@ func (cb *UpdateProgressCallback) Unregister() {
 	updateProgressCallbacksLock.Lock()
 	delete(updateProgressCallbacks, cb)
 	updateProgressCallbacksLock.Unlock()
+}
+
+func IPCClientSignInBegin() (start SignInStart, err error) {
+	rpcMutex.Lock()
+	defer rpcMutex.Unlock()
+
+	err = rpcEncoder.Encode(SignInBeginMethodType)
+	if err != nil {
+		return
+	}
+	err = rpcDecoder.Decode(&start)
+	if err != nil {
+		return
+	}
+	err = rpcDecodeError()
+	return
+}
+
+func IPCClientSignInFinish(id, code, state string) (tunnel Tunnel, err error) {
+	rpcMutex.Lock()
+	defer rpcMutex.Unlock()
+
+	err = rpcEncoder.Encode(SignInFinishMethodType)
+	if err != nil {
+		return
+	}
+	for _, v := range []string{id, code, state} {
+		err = rpcEncoder.Encode(v)
+		if err != nil {
+			return
+		}
+	}
+	err = rpcDecoder.Decode(&tunnel)
+	if err != nil {
+		return
+	}
+	err = rpcDecodeError()
+	return
 }

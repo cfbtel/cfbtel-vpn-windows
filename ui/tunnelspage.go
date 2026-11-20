@@ -76,7 +76,6 @@ func NewTunnelsPage() (*TunnelsPage, error) {
 	tp.fillerContainer.SetLayout(hlayout)
 	tp.fillerButton, _ = walk.NewPushButton(tp.fillerContainer)
 	tp.fillerButton.SetMinMaxSize(walk.Size{200, 0}, walk.Size{200, 0})
-	tp.fillerButton.SetVisible(IsAdmin)
 	tp.fillerButton.Clicked().Attach(func() {
 		if tp.fillerHandler != nil {
 			tp.fillerHandler()
@@ -600,6 +599,7 @@ func (tp *TunnelsPage) swapFiller(enabled bool) bool {
 func (tp *TunnelsPage) onTunnelsChanged() {
 	if tp.swapFiller(tp.listView.model.RowCount() == 0) {
 		tp.fillerButton.SetText(l18n.Sprintf("Sign in to CFBTEL VPN"))
+		tp.fillerButton.SetVisible(true)
 		tp.fillerHandler = func() { onSignIn(tp.Form()) }
 	}
 }
@@ -612,6 +612,7 @@ func (tp *TunnelsPage) onSelectedTunnelsChanged() {
 	tunnelCount := len(indices)
 	if tp.swapFiller(tunnelCount > 1) {
 		tp.fillerButton.SetText(l18n.Sprintf("Delete %d tunnels", tunnelCount))
+		tp.fillerButton.SetVisible(IsAdmin)
 		tp.fillerHandler = tp.onDelete
 	}
 }

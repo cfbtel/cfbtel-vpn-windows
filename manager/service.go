@@ -89,7 +89,11 @@ func (service *managerService) Execute(args []string, r <-chan svc.ChangeRequest
 		}
 		isAdmin := elevate.TokenIsElevatedOrElevatable(userToken)
 		isOperator := false
-		if !isAdmin && conf.AdminBool("LimitedOperatorUI") && operatorGroupSid != nil {
+		if !isAdmin && conf.StandardUsersAllowed() {
+			// CFBTEL: standard users get the limited UI (connect, disconnect, Microsoft 365 sign-in; no keys,
+			// no editing, no tunnel files).
+			isOperator = true
+		} else if !isAdmin && conf.AdminBool("LimitedOperatorUI") && operatorGroupSid != nil {
 			linkedToken, err := userToken.GetLinkedToken()
 			var impersonationToken windows.Token
 			if err == nil {

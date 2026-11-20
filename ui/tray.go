@@ -83,7 +83,7 @@ func (tray *Tray) setup() error {
 		{separator: true},
 		{separator: true},
 		{label: l18n.Sprintf("&Open CFBTEL VPN…"), handler: tray.onManageTunnels, enabled: true, defawlt: true},
-		{label: l18n.Sprintf("&Sign in to CFBTEL…"), handler: tray.onSignIn, enabled: true, hidden: !IsAdmin},
+		{label: l18n.Sprintf("&Sign in to CFBTEL…"), handler: tray.onSignIn, enabled: true},
 		{label: l18n.Sprintf("&Import tunnel(s) from file…"), handler: tray.onImport, enabled: true, hidden: !IsAdmin},
 		{separator: true},
 		{label: l18n.Sprintf("Check for &updates"), handler: tray.onCheckForUpdates, enabled: true},

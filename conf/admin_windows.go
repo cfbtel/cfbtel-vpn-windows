@@ -37,3 +37,23 @@ func AdminBool(name string) bool {
 	}
 	return val != 0
 }
+
+// AdminBoolDefault is AdminBool for settings that are on unless an administrator sets them to 0.
+func AdminBoolDefault(name string, def bool) bool {
+	key, err := openAdminKey()
+	if err != nil {
+		return def
+	}
+	val, _, err := key.GetIntegerValue(name)
+	if err != nil {
+		return def
+	}
+	return val != 0
+}
+
+// StandardUsersAllowed says whether people who aren't administrators on this computer may use CFBTEL VPN:
+// sign in with Microsoft 365, connect and disconnect. On by default; an administrator turns it off with
+// HKLM\Software\CFBTEL\VPN StandardUsers = 0 (REG_DWORD).
+func StandardUsersAllowed() bool {
+	return AdminBoolDefault("StandardUsers", true)
+}

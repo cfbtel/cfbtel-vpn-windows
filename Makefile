@@ -1,5 +1,5 @@
 CFBTEL_SIGNER ?= CFBTEL
-GOFLAGS := -tags load_wgnt_from_rsrc -ldflags="-H windowsgui -s -w -X 'golang.zx2c4.com/wireguard/windows/version.officialCommonName=$(CFBTEL_SIGNER)' -X 'golang.zx2c4.com/wireguard/windows/ui.portalURL=$(CFBTEL_PORTAL_URL)'" -trimpath -buildvcs=false -v
+GOFLAGS := -tags load_wgnt_from_rsrc -ldflags="-H windowsgui -s -w -X 'golang.zx2c4.com/wireguard/windows/version.officialCommonName=$(CFBTEL_SIGNER)' -X 'golang.zx2c4.com/wireguard/windows/portal.URL=$(CFBTEL_PORTAL_URL)'" -trimpath -buildvcs=false -v
 export GOOS := windows
 export PATH := $(CURDIR)/.deps/go/bin:$(PATH)
 

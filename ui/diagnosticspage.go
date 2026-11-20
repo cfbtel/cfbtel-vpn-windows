@@ -32,6 +32,7 @@ import (
 	"golang.zx2c4.com/wireguard/windows/diag"
 	"golang.zx2c4.com/wireguard/windows/l18n"
 	"golang.zx2c4.com/wireguard/windows/manager"
+	"golang.zx2c4.com/wireguard/windows/portal"
 	"golang.zx2c4.com/wireguard/windows/ringlogger"
 	"golang.zx2c4.com/wireguard/windows/version"
 )
@@ -335,7 +336,7 @@ func (dp *DiagnosticsPage) Run(done func()) {
 	dp.resize()
 	go func() {
 		sys, offices := dp.gather()
-		base, _ := portal()
+		base, _ := portal.Base()
 		env := diag.DefaultEnv(base, diag.Ping)
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
@@ -454,7 +455,7 @@ func (dp *DiagnosticsPage) onSend() {
 }
 
 func postSupport(req supportRequest) (ref string, emailed bool, err error) {
-	base, err := portal()
+	base, err := portal.Base()
 	if err != nil {
 		return "", false, err
 	}

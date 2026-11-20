@@ -74,7 +74,7 @@ if exist .deps\prepared goto :render
 	%~2-w64-mingw32-windres -I ".deps\wireguard-nt\bin\%~1" -DWIREGUARD_VERSION_ARRAY=%WIREGUARD_VERSION_ARRAY% -DWIREGUARD_VERSION_STR=%WIREGUARD_VERSION% -i resources.rc -o "resources_%~3.syso" -O coff -c 65001 || exit /b %errorlevel%
 	echo [+] Building program %1
 	if "%CFBTEL_SIGNER%"=="" set CFBTEL_SIGNER=CFBTEL
-	go build -tags load_wgnt_from_rsrc -ldflags="-H windowsgui -s -w -X 'golang.zx2c4.com/wireguard/windows/version.officialCommonName=%CFBTEL_SIGNER%' -X 'golang.zx2c4.com/wireguard/windows/ui.portalURL=%CFBTEL_PORTAL_URL%'" -trimpath -buildvcs=false -v -o "%~1\cfbtelvpn.exe" || exit /b 1
+	go build -tags load_wgnt_from_rsrc -ldflags="-H windowsgui -s -w -X 'golang.zx2c4.com/wireguard/windows/version.officialCommonName=%CFBTEL_SIGNER%' -X 'golang.zx2c4.com/wireguard/windows/portal.URL=%CFBTEL_PORTAL_URL%'" -trimpath -buildvcs=false -v -o "%~1\cfbtelvpn.exe" || exit /b 1
 	if not exist "%~1\wg.exe" (
 		echo [+] Building command line tools %1
 		del .deps\src\*.exe .deps\src\*.o .deps\src\wincompat\*.o .deps\src\wincompat\*.lib 2> NUL

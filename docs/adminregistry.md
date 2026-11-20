@@ -6,6 +6,23 @@ planned. These registry keys may also be removed at some point in the future.
 The uninstaller will clean up the entirety of `HKLM\Software\WireGuard`. Use
 at your own risk, and please make sure you know what you're doing.
 
+#### `HKLM\Software\CFBTEL\VPN\StandardUsers` (CFBTEL VPN)
+
+On by default (no value needed). People who are not administrators on the computer get CFBTEL VPN in their
+Windows session with a limited window: they can sign in with Microsoft 365, connect, disconnect, see status
+and run updates. They can't see keys, edit, import, export or remove tunnels, or quit the app.
+
+A standard user's Microsoft 365 sign-in is finished by the CFBTEL VPN Manager service (running as Local
+System): the service makes the key pair, collects the settings from the CFBTEL VPN page itself and saves the
+tunnel. So a standard user can only add a tunnel issued by the CFBTEL VPN page, never a tunnel file of their
+own.
+
+To allow administrators only, set it to `DWORD(0)`:
+
+```
+> reg add HKLM\Software\CFBTEL\VPN /v StandardUsers /t REG_DWORD /d 0 /f
+```
+
 #### `HKLM\Software\WireGuard\LimitedOperatorUI`
 
 When this key is set to `DWORD(1)`, the UI will be launched on desktops of
