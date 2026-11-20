@@ -21,6 +21,7 @@ type ManageTunnelsWindow struct {
 	walk.FormBase
 
 	tabs        *walk.TabWidget
+	homePage    *HomePage
 	tunnelsPage *TunnelsPage
 	logPage     *LogPage
 	updatePage  *UpdatePage
@@ -71,8 +72,8 @@ func NewManageTunnelsWindow() (*ManageTunnelsWindow, error) {
 	}
 	mtw.SetTitle("CFBTEL VPN")
 	mtw.SetFont(font)
-	mtw.SetSize(walk.Size{675, 525})
-	mtw.SetMinMaxSize(walk.Size{500, 400}, walk.Size{0, 0})
+	mtw.SetSize(walk.Size{560, 640})
+	mtw.SetMinMaxSize(walk.Size{460, 520}, walk.Size{0, 0})
 	vlayout := walk.NewVBoxLayout()
 	vlayout.SetMargins(walk.Margins{5, 5, 5, 5})
 	mtw.SetLayout(vlayout)
@@ -89,6 +90,11 @@ func NewManageTunnelsWindow() (*ManageTunnelsWindow, error) {
 	if mtw.tabs, err = walk.NewTabWidget(mtw); err != nil {
 		return nil, err
 	}
+
+	if mtw.homePage, err = NewHomePage(); err != nil {
+		return nil, err
+	}
+	mtw.tabs.Pages().Add(mtw.homePage.TabPage)
 
 	if mtw.tunnelsPage, err = NewTunnelsPage(); err != nil {
 		return nil, err
@@ -177,6 +183,9 @@ func (mtw *ManageTunnelsWindow) onTunnelChange(tunnel *manager.Tunnel, state, gl
 }
 
 func (mtw *ManageTunnelsWindow) UpdateFound() {
+	if mtw.homePage != nil {
+		mtw.homePage.UpdateFound()
+	}
 	if mtw.updatePage != nil {
 		return
 	}
@@ -214,12 +223,7 @@ func (mtw *ManageTunnelsWindow) WndProc(hwnd win.HWND, msg uint32, wParam, lPara
 		}
 		if !mtw.Visible() {
 			mtw.tunnelsPage.listView.SelectFirstActiveTunnel()
-			if mtw.tabs.Pages().Len() != 3 {
-				mtw.tabs.SetCurrentIndex(0)
-			}
-		}
-		if mtw.tabs.Pages().Len() == 3 {
-			mtw.tabs.SetCurrentIndex(2)
+			mtw.tabs.SetCurrentIndex(0) // Home
 		}
 		raise(mtw.Handle())
 		return 0

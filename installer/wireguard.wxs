@@ -42,6 +42,12 @@
 		<Icon Id="wireguard.ico" SourceFile="..\ui\icon\wireguard.ico" />
 		<Binary Id="customactions.dll" SourceFile="$(var.WIREGUARD_PLATFORM)\customactions.dll" />
 
+		<!-- CFBTEL setup wizard: welcome + license and open-source notices, then install. Updates run without it (/qb!-). -->
+		<UIRef Id="WixUI_Minimal" />
+		<WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+		<WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />
+		<WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" />
+
 		<Property Id="ARPPRODUCTICON" Value="wireguard.ico" />
 		<Property Id="ARPURLINFOABOUT" Value="https://www.cfbtel.com/" />
 		<Property Id="ARPNOMODIFY" Value="yes" />

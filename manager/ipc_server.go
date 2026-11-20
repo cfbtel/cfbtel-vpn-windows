@@ -260,9 +260,8 @@ func (s *ManagerService) UpdateState() UpdateState {
 }
 
 func (s *ManagerService) Update() {
-	if s.elevatedToken == 0 {
-		return
-	}
+	// CFBTEL: anyone running the app may install an update; it is verified with CFBTEL's release key and
+	// installed by the service (as SYSTEM) when the session isn't elevated, like the automatic update.
 	progress := updater.DownloadVerifyAndExecute(uintptr(s.elevatedToken))
 	go func() {
 		for {

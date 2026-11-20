@@ -1,0 +1,225 @@
+{\rtf1\ansi\deff0{\fonttbl{\f0 Segoe UI;}}\f0\fs16
+CFBTEL VPN\par
+Copyright (c) 2026 CFBTEL. All rights reserved.\par
+Help: help@cfbtel.com  \u183?  https://www.cfbtel.com/\par
+\par
+CFBTEL VPN is built on open-source software. The CFBTEL name, logo and\par
+sign-in service belong to CFBTEL. The parts listed below belong to their\par
+authors and are used under the licenses that follow.\par
+\par
+"WireGuard" and the "WireGuard" logo are registered trademarks of\par
+Jason A. Donenfeld. CFBTEL VPN is not made or endorsed by WireGuard LLC.\par
+\par
+Components\par
+----------\par
+1. WireGuard for Windows 1.1.1 (application this app is based on)\par
+   Copyright (C) 2018-2026 WireGuard LLC. MIT License.\par
+   Source: https://git.zx2c4.com/wireguard-windows\par
+   CFBTEL's changes: https://github.com/cfbtel/cfbtel-vpn-windows\par
+2. WireGuardNT 1.1 (wireguard.dll, the network driver)\par
+   Copyright (C) WireGuard LLC. Prebuilt Binaries License.\par
+   Source: https://git.zx2c4.com/wireguard-nt\par
+3. Walk, Windows Application Library Kit (user interface)\par
+   Copyright (c) 2010 The Walk Authors. BSD 3-Clause License.\par
+4. win (Windows API bindings)\par
+   Copyright (c) 2010 The win Authors. BSD 3-Clause License.\par
+5. The Go programming language and golang.org/x/crypto, net, sys and text\par
+   Copyright 2009 The Go Authors. BSD 3-Clause License.\par
+\par
+==============================================================================\par
+1. WireGuard for Windows \u8212? MIT License\par
+==============================================================================\par
+Copyright (C) 2018-2026 WireGuard LLC. All Rights Reserved.\par
+\par
+Permission is hereby granted, free of charge, to any person obtaining a\par
+copy of this software and associated documentation files (the "Software"),\par
+to deal in the Software without restriction, including without limitation\par
+the rights to use, copy, modify, merge, publish, distribute, sublicense,\par
+and/or sell copies of the Software, and to permit persons to whom the\par
+Software is furnished to do so, subject to the following conditions:\par
+\par
+The above copyright notice and this permission notice shall be included in\par
+all copies or substantial portions of the Software.\par
+\par
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR\par
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,\par
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE\par
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER\par
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING\par
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER\par
+DEALINGS IN THE SOFTWARE.\par
+\par
+==============================================================================\par
+2. WireGuardNT (wireguard.dll) \u8212? Prebuilt Binaries License\par
+==============================================================================\par
+Prebuilt Binaries License\par
+-------------------------\par
+\par
+1. DEFINITIONS. "Software" means the precise contents of the "wireguard.dll"\par
+   files that are included in the .zip file that contains this document as\par
+   downloaded from download.wireguard.com.\par
+\par
+2. LICENSE GRANT. WireGuard LLC grants to you a non-exclusive and\par
+   non-transferable right to use Software for lawful purposes under certain\par
+   obligations and limited rights as set forth in this agreement.\par
+\par
+3. RESTRICTIONS. Software is owned and copyrighted by WireGuard LLC. It is\par
+   licensed, not sold. Title to Software and all associated intellectual\par
+   property rights are retained by WireGuard. You must not:\par
+   a. reverse engineer, decompile, disassemble, extract from, or otherwise\par
+      modify the Software;\par
+   b. modify or create derivative work based upon Software in whole or in\par
+      parts, except insofar as only the API interfaces of the "wireguard.h" file\par
+      distributed alongside the Software (the "Permitted API") are used;\par
+   c. remove any proprietary notices, labels, or copyrights from the Software;\par
+   d. resell, redistribute, lease, rent, transfer, sublicense, or otherwise\par
+      transfer rights of the Software without the prior written consent of\par
+      WireGuard LLC, except insofar as the Software is distributed alongside\par
+      other software that uses the Software only via the Permitted API;\par
+   e. use the name of WireGuard LLC, the WireGuard project, the WireGuard\par
+      project, or the names of its contributors to endorse or promote products\par
+      derived from the Software without specific prior written consent.\par
+\par
+4. LIMITED WARRANTY. THE SOFTWARE IS PROVIDED "AS IS" AND WITHOUT WARRANTY OF\par
+   ANY KIND. WIREGUARD LLC HEREBY EXCLUDES AND DISCLAIMS ALL IMPLIED OR\par
+   STATUTORY WARRANTIES, INCLUDING ANY WARRANTIES OF MERCHANTABILITY, FITNESS\par
+   FOR A PARTICULAR PURPOSE, QUALITY, NON-INFRINGEMENT, TITLE, RESULTS,\par
+   EFFORTS, OR QUIET ENJOYMENT. THERE IS NO WARRANTY THAT THE PRODUCT WILL BE\par
+   ERROR-FREE OR WILL FUNCTION WITHOUT INTERRUPTION. YOU ASSUME THE ENTIRE\par
+   RISK FOR THE RESULTS OBTAINED USING THE PRODUCT. TO THE EXTENT THAT\par
+   WIREGUARD LLC MAY NOT DISCLAIM ANY WARRANTY AS A MATTER OF APPLICABLE LAW,\par
+   THE SCOPE AND DURATION OF SUCH WARRANTY WILL BE THE MINIMUM PERMITTED UNDER\par
+   SUCH LAW. ALL EXPRESS OR IMPLIED CONDITIONS, REPRESENTATIONS AND\par
+   WARRANTIES, INCLUDING ANY IMPLIED WARRANTY OF MERCHANTABILITY, FITNESS FOR\par
+   A PARTICULAR PURPOSE OR NON-INFRINGEMENT ARE DISCLAIMED, EXCEPT TO THE\par
+   EXTENT THAT THESE DISCLAIMERS ARE HELD TO BE LEGALLY INVALID.\par
+\par
+5. LIMITATION OF LIABILITY. To the extent not prohibited by law, in no event\par
+   WireGuard LLC or any third-party-developer will be liable for any lost\par
+   revenue, profit or data or for special, indirect, consequential, incidental\par
+   or punitive damages, however caused regardless of the theory of liability,\par
+   arising out of or related to the use of or inability to use Software, even\par
+   if WireGuard LLC has been advised of the possibility of such damages.\par
+   Solely you are responsible for determining the appropriateness of using\par
+   Software and accept full responsibility for all risks associated with its\par
+   exercise of rights under this agreement, including but not limited to the\par
+   risks and costs of program errors, compliance with applicable laws, damage\par
+   to or loss of data, programs or equipment, and unavailability or\par
+   interruption of operations. The foregoing limitations will apply even if\par
+   the above stated warranty fails of its essential purpose. You acknowledge,\par
+   that it is in the nature of software that software is complex and not\par
+   completely free of errors. In no event shall WireGuard LLC or any\par
+   third-party-developer be liable to you under any theory for any damages\par
+   suffered by you or any user of Software or for any special, incidental,\par
+   indirect, consequential or similar damages (including without limitation\par
+   damages for loss of business profits, business interruption, loss of\par
+   business information or any other pecuniary loss) arising out of the use or\par
+   inability to use Software, even if WireGuard LLC has been advised of the\par
+   possibility of such damages and regardless of the legal or quitable theory\par
+   (contract, tort, or otherwise) upon which the claim is based.\par
+\par
+6. TERMINATION. This agreement is affected until terminated. You may\par
+   terminate this agreement at any time. This agreement will terminate\par
+   immediately without notice from WireGuard LLC if you fail to comply with\par
+   the terms and conditions of this agreement. Upon termination, you must\par
+   delete Software and all copies of Software and cease all forms of\par
+   distribution of Software.\par
+\par
+7. SEVERABILITY. If any provision of this agreement is held to be\par
+   unenforceable, this agreement will remain in effect with the provision\par
+   omitted, unless omission would frustrate the intent of the parties, in\par
+   which case this agreement will immediately terminate.\par
+\par
+8. RESERVATION OF RIGHTS. All rights not expressly granted in this agreement\par
+   are reserved by WireGuard LLC. For example, WireGuard LLC reserves the\par
+   right at any time to cease development of Software, to alter distribution\par
+   details, features, specifications, capabilities, functions, licensing\par
+   terms, release dates, APIs, ABIs, general availability, or other\par
+   characteristics of the Software.\par
+\par
+==============================================================================\par
+3. Walk \u8212? BSD 3-Clause License\par
+==============================================================================\par
+Copyright (c) 2010 The Walk Authors. All rights reserved.\par
+\par
+Redistribution and use in source and binary forms, with or without\par
+modification, are permitted provided that the following conditions\par
+are met:\par
+1. Redistributions of source code must retain the above copyright\par
+   notice, this list of conditions and the following disclaimer.\par
+2. Redistributions in binary form must reproduce the above copyright\par
+   notice, this list of conditions and the following disclaimer in the\par
+   documentation and/or other materials provided with the distribution.\par
+3. The names of the authors may not be used to endorse or promote products\par
+   derived from this software without specific prior written permission.\par
+\par
+THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR\par
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES\par
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.\par
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT,\par
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT\par
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\par
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\par
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\par
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF\par
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\par
+\par
+==============================================================================\par
+4. win \u8212? BSD 3-Clause License\par
+==============================================================================\par
+Copyright (c) 2010 The win Authors. All rights reserved.\par
+\par
+Redistribution and use in source and binary forms, with or without\par
+modification, are permitted provided that the following conditions\par
+are met:\par
+1. Redistributions of source code must retain the above copyright\par
+   notice, this list of conditions and the following disclaimer.\par
+2. Redistributions in binary form must reproduce the above copyright\par
+   notice, this list of conditions and the following disclaimer in the\par
+   documentation and/or other materials provided with the distribution.\par
+3. The names of the authors may not be used to endorse or promote products\par
+   derived from this software without specific prior written permission.\par
+\par
+THIS SOFTWARE IS PROVIDED BY THE AUTHORS ``AS IS'' AND ANY EXPRESS OR\par
+IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES\par
+OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.\par
+IN NO EVENT SHALL THE AUTHORS BE LIABLE FOR ANY DIRECT, INDIRECT,\par
+INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT\par
+NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\par
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\par
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\par
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF\par
+THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\par
+\par
+==============================================================================\par
+5. Go and golang.org/x \u8212? BSD 3-Clause License\par
+==============================================================================\par
+Copyright 2009 The Go Authors.\par
+\par
+Redistribution and use in source and binary forms, with or without\par
+modification, are permitted provided that the following conditions are\par
+met:\par
+\par
+   * Redistributions of source code must retain the above copyright\par
+notice, this list of conditions and the following disclaimer.\par
+   * Redistributions in binary form must reproduce the above\par
+copyright notice, this list of conditions and the following disclaimer\par
+in the documentation and/or other materials provided with the\par
+distribution.\par
+   * Neither the name of Google LLC nor the names of its\par
+contributors may be used to endorse or promote products derived from\par
+this software without specific prior written permission.\par
+\par
+THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS\par
+"AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT\par
+LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR\par
+A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT\par
+OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,\par
+SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT\par
+LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE,\par
+DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY\par
+THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT\par
+(INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE\par
+OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.\par
+
+}

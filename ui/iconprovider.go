@@ -37,7 +37,16 @@ func iconWithOverlayForState(state manager.TunnelState, size int) (icon walk.Ima
 	}
 
 	if state == manager.TunnelStopped {
-		return wireguardIcon, err // TODO: if we find something prettier than the gray dot, then remove this clause
+		// CFBTEL: a faded logo when no office is connected.
+		bmp, err := walk.NewBitmapFromIcon(wireguardIcon, walk.Size{size, size})
+		if err != nil {
+			return wireguardIcon, nil
+		}
+		icon = walk.NewPaintFuncImage(walk.Size{size, size}, func(canvas *walk.Canvas, bounds walk.Rectangle) error {
+			return canvas.DrawBitmapWithOpacity(bmp, bounds, 120)
+		})
+		cachedOverlayIconsForWidthAndState[widthAndState{size, state}] = icon
+		return icon, nil
 	}
 
 	iconSize := wireguardIcon.Size()

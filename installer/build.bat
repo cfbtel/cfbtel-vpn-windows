@@ -11,7 +11,7 @@ for /f "tokens=3" %%a in ('findstr /r "Number.*=.*[0-9.]*" ..\version\version.go
 set WIREGUARD_VERSION=%WIREGUARD_VERSION:"=%
 
 set WIX_CANDLE_FLAGS=-nologo -dWIREGUARD_VERSION="%WIREGUARD_VERSION%"
-set WIX_LIGHT_FLAGS=-nologo -spdb
+set WIX_LIGHT_FLAGS=-nologo -spdb -ext WixUIExtension -cultures:en-us
 set WIX_LIGHT_FLAGS=%WIX_LIGHT_FLAGS% -sice:ICE39
 set WIX_LIGHT_FLAGS=%WIX_LIGHT_FLAGS% -sice:ICE61
 set WIX_LIGHT_FLAGS=%WIX_LIGHT_FLAGS% -sice:ICE03

@@ -81,10 +81,11 @@ func (tray *Tray) setup() error {
 		{label: l18n.Sprintf("Addresses: None"), hidden: true},
 		{separator: true},
 		{separator: true},
-		{label: l18n.Sprintf("&Manage tunnels…"), handler: tray.onManageTunnels, enabled: true, defawlt: true},
+		{label: l18n.Sprintf("&Open CFBTEL VPN…"), handler: tray.onManageTunnels, enabled: true, defawlt: true},
 		{label: l18n.Sprintf("&Sign in to CFBTEL…"), handler: tray.onSignIn, enabled: true, hidden: !IsAdmin},
 		{label: l18n.Sprintf("&Import tunnel(s) from file…"), handler: tray.onImport, enabled: true, hidden: !IsAdmin},
 		{separator: true},
+		{label: l18n.Sprintf("Check for &updates"), handler: tray.onCheckForUpdates, enabled: true},
 		{label: l18n.Sprintf("&About CFBTEL VPN…"), handler: tray.onAbout, enabled: true},
 		{label: l18n.Sprintf("E&xit"), handler: onQuit, enabled: true, hidden: !IsAdmin},
 	} {
@@ -171,7 +172,7 @@ func (tray *Tray) addTunnelAction(tunnel *manager.Tunnel) {
 				tray.mtw.Synchronize(func() {
 					raise(tray.mtw.Handle())
 					tray.mtw.tunnelsPage.listView.selectTunnel(tclosure.Name)
-					tray.mtw.tabs.SetCurrentIndex(0)
+					tray.mtw.tabs.SetCurrentIndex(tray.mtw.tabs.Pages().Index(tray.mtw.tunnelsPage.TabPage))
 					if oldState == manager.TunnelUnknown {
 						showErrorCustom(tray.mtw, l18n.Sprintf("Failed to determine tunnel state"), err.Error())
 					} else if oldState == manager.TunnelStopped {
@@ -351,7 +352,9 @@ func (tray *Tray) UpdateFound() {
 		if !tray.mtw.Visible() {
 			tray.mtw.tunnelsPage.listView.SelectFirstActiveTunnel()
 		}
-		tray.mtw.tabs.SetCurrentIndex(2)
+		if tray.mtw.updatePage != nil {
+			tray.mtw.tabs.SetCurrentIndex(tray.mtw.tabs.Pages().Index(tray.mtw.updatePage.TabPage))
+		}
 		raise(tray.mtw.Handle())
 	}
 	action.Triggered().Attach(showUpdateTab)
@@ -360,7 +363,7 @@ func (tray *Tray) UpdateFound() {
 
 	showUpdateBalloon := func() {
 		icon, _ := loadShieldIcon(128)
-		tray.ShowCustom(l18n.Sprintf("CFBTEL VPN Update Available"), l18n.Sprintf("An update to CFBTEL VPN is now available. You are advised to update as soon as possible."), icon)
+		tray.ShowCustom(l18n.Sprintf("CFBTEL VPN Update Available"), l18n.Sprintf("A new version of CFBTEL VPN is available. It installs by itself when the VPN is off (within a day at most), or click here to update now."), icon)
 	}
 
 	timeSinceStart := time.Now().Sub(startTime)
@@ -377,6 +380,13 @@ func (tray *Tray) onManageTunnels() {
 	tray.mtw.tunnelsPage.listView.SelectFirstActiveTunnel()
 	tray.mtw.tabs.SetCurrentIndex(0)
 	raise(tray.mtw.Handle())
+}
+
+func (tray *Tray) onCheckForUpdates() {
+	tray.onManageTunnels()
+	if tray.mtw.homePage != nil {
+		tray.mtw.homePage.CheckForUpdates()
+	}
 }
 
 func (tray *Tray) onAbout() {

@@ -47,7 +47,7 @@ func NewTunnelsPage() (*TunnelsPage, error) {
 	}
 	disposables.Add(tp)
 
-	tp.SetTitle(l18n.Sprintf("Tunnels"))
+	tp.SetTitle(l18n.Sprintf("Advanced"))
 	tp.SetLayout(walk.NewHBoxLayout())
 
 	tp.listContainer, _ = walk.NewComposite(tp)

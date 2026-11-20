@@ -21,6 +21,11 @@ What's different from upstream:
   `HKLM\Software\CFBTEL\VPN\DisableAutoUpdate` = 1 (DWORD); updates are then only offered.
 * **About**: CFBTEL copyright, help@cfbtel.com, and **Open-source licenses** (`ui/notices.txt`: WireGuard for
   Windows MIT, WireGuardNT Prebuilt Binaries License, Walk/win/Go BSD-3). Keep it current when dependencies change.
+* **CFBTEL look**: the window opens on **Home** — CFBTEL navy/cyan status header, one big Connect / Disconnect
+  button, traffic and handshake while connected, and "Your offices" (click an office's *Connect* to switch).
+  The WireGuard tunnel editor and log are on the **Advanced** and **Log** tabs. The tray icon is faded when off.
+  **Check for updates** is on Home and in the tray menu (anyone can install a newer signed release).
+  The installer has a CFBTEL wizard (`installer/dialog.bmp`, `banner.bmp`, `license.rtf` from `ui/notices.txt`).
 * English UI.
 
 ## Releasing
