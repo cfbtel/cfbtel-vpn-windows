@@ -6,8 +6,14 @@ name: Build and release CFBTEL VPN for Windows
 # The app's updater reads releases/latest/download/latest.sig, so only the latest full release is offered.
 # Without the code-signing secrets the build is published as a pre-release (installs fine, no auto-update).
 #
-# Secrets: CFBTEL_RELEASE_KEY (releasesign private key), CFBTEL_PORTAL_URL (https://<staff VPN page host>),
-#          CFBTEL_CODESIGN_PFX (base64 of the .pfx), CFBTEL_CODESIGN_PASSWORD.
+# Secrets: CFBTEL_RELEASE_KEY (releasesign private key), CFBTEL_PORTAL_URL (https://<staff VPN page host>).
+# Code signing, either:
+#   Microsoft Artifact Signing (recommended) - repository variables AZURE_CLIENT_ID, AZURE_TENANT_ID,
+#     AZURE_SUBSCRIPTION_ID (an Entra app with a GitHub federated credential and the
+#     "Artifact Signing Certificate Profile Signer" role), ARTIFACT_SIGNING_ENDPOINT (e.g. https://wus2.codesigning.azure.net/),
+#     ARTIFACT_SIGNING_ACCOUNT, ARTIFACT_SIGNING_PROFILE, CFBTEL_SIGNER (the certificate's name = the validated
+#     organization name, exactly as in the certificate subject preview); or
+#   a .pfx certificate - secrets CFBTEL_CODESIGN_PFX (base64) and CFBTEL_CODESIGN_PASSWORD.
 # Actions are pinned to commit SHAs (organization policy).
 # Release key: made with tools/releasesign (or cfbtel-release-keygen.html); public key in updater/constants.go.
 
@@ -21,6 +27,7 @@ on:
 
 permissions:
   contents: write
+  id-token: write # Azure sign-in for Artifact Signing (OpenID Connect, no stored Azure secret)
 
 concurrency:
   group: release
@@ -59,15 +66,50 @@ jobs:
           Write-Host "Release public key (app):    $inApp"
           if ($pub -ne $inApp) { throw "The CFBTEL_RELEASE_KEY secret doesn't match updater/constants.go. Put the public key above into updater/constants.go." }
 
+      - name: Azure sign-in (Artifact Signing)
+        if: steps.v.outputs.exists == 'false' && vars.ARTIFACT_SIGNING_ACCOUNT != ''
+        uses: azure/login@7184910d9eb2b1c5e48f7073824a90609bb9b6d6 # v2.3.1
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Artifact Signing
+        id: azsign
+        if: steps.v.outputs.exists == 'false' && vars.ARTIFACT_SIGNING_ACCOUNT != ''
+        shell: pwsh
+        env:
+          AS_ENDPOINT: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          AS_ACCOUNT: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          AS_PROFILE: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          SIGNER: ${{ vars.CFBTEL_SIGNER }}
+        run: |
+          if (-not $env:SIGNER) { throw "Set the CFBTEL_SIGNER variable to the certificate's name (the validated organization name)." }
+          # Microsoft's signtool plug-in (Microsoft.ArtifactSigning.Client 1.0.151), checked by hash.
+          $pkg = Join-Path $env:RUNNER_TEMP 'artifactsigning.nupkg'
+          Invoke-WebRequest https://api.nuget.org/v3-flatcontainer/microsoft.artifactsigning.client/1.0.151/microsoft.artifactsigning.client.1.0.151.nupkg -OutFile $pkg
+          if ((Get-FileHash $pkg -Algorithm SHA256).Hash -ne '35375A4BC4E1102DA729FC3D8D9925F774C3BAAE6B8B7FF6398D948CA9AB0D8A') { throw "Artifact Signing client package hash mismatch" }
+          $dir = Join-Path $env:RUNNER_TEMP 'artifactsigning'
+          Expand-Archive $pkg $dir -Force
+          $dlib = Join-Path $dir 'bin\x64\Azure.CodeSigning.Dlib.dll'
+          $meta = Join-Path $env:RUNNER_TEMP 'artifactsigning.json'
+          @{ Endpoint = $env:AS_ENDPOINT; CodeSigningAccountName = $env:AS_ACCOUNT; CertificateProfileName = $env:AS_PROFILE; ExcludeCredentials = @('ManagedIdentityCredential','EnvironmentCredential','WorkloadIdentityCredential','SharedTokenCacheCredential','VisualStudioCredential','VisualStudioCodeCredential','AzurePowerShellCredential','AzureDeveloperCliCredential','InteractiveBrowserCredential') } | ConvertTo-Json | Set-Content -Encoding utf8 $meta
+          $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
+          # build.bat and installer\build.bat call sign.bat, which sets the signing options.
+          "@set SigningProvider=/dlib `"$dlib`" /dmdf `"$meta`"`r`n@set TimestampServer=http://timestamp.acs.microsoft.com`r`n@set PATH=$($signtool.DirectoryName);%PATH%" | Set-Content -Encoding ascii sign.bat
+          "CFBTEL_SIGNER=$env:SIGNER" >> $env:GITHUB_ENV
+          "CFBTEL_SIGNED=true" >> $env:GITHUB_ENV
+          Write-Host "Signing with Artifact Signing as: $env:SIGNER"
+
       - name: Code-signing certificate
         id: cert
-        if: steps.v.outputs.exists == 'false'
+        if: steps.v.outputs.exists == 'false' && vars.ARTIFACT_SIGNING_ACCOUNT == ''
         shell: pwsh
         env:
           PFX: ${{ secrets.CFBTEL_CODESIGN_PFX }}
           PFX_PASSWORD: ${{ secrets.CFBTEL_CODESIGN_PASSWORD }}
         run: |
-          if (-not $env:PFX) { "signed=false" >> $env:GITHUB_OUTPUT; Write-Host "::warning::No code-signing certificate: publishing an unsigned pre-release."; exit 0 }
+          if (-not $env:PFX) { Write-Host "::warning::No code signing set up: publishing an unsigned pre-release."; exit 0 }
           $path = Join-Path $env:RUNNER_TEMP 'codesign.pfx'
           [IO.File]::WriteAllBytes($path, [Convert]::FromBase64String($env:PFX))
           $cert = New-Object System.Security.Cryptography.X509Certificates.X509Certificate2($path, $env:PFX_PASSWORD)
@@ -77,7 +119,7 @@ jobs:
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
           # build.bat and installer\build.bat call sign.bat, which sets the signing options.
           "@set SigningProvider=/f `"$path`" /p `"%CFBTEL_CODESIGN_PASSWORD%`"`r`n@set TimestampServer=http://timestamp.digicert.com`r`n@set PATH=$($signtool.DirectoryName);%PATH%" | Set-Content -Encoding ascii sign.bat
-          "signed=true" >> $env:GITHUB_OUTPUT
+          "CFBTEL_SIGNED=true" >> $env:GITHUB_ENV
 
       - name: Build programs
         if: steps.v.outputs.exists == 'false'
@@ -113,5 +155,5 @@ jobs:
           $files = (Get-ChildItem installer\dist\cfbtelvpn-*.msi).FullName + "installer\dist\latest.sig"
           $notes = "CFBTEL VPN for Windows $n (based on WireGuard for Windows 1.1.1).`n`nDownload **cfbtelvpn-amd64-$n.msi** for most PCs (arm64 for ARM PCs). Installed copies update themselves."
           $extra = @()
-          if ("${{ steps.cert.outputs.signed }}" -ne "true") { $extra += "--prerelease"; $notes += "`n`n> Unsigned test build: Windows SmartScreen will warn, and automatic updates are off." }
+          if ($env:CFBTEL_SIGNED -ne "true") { $extra += "--prerelease"; $notes += "`n`n> Unsigned test build: Windows SmartScreen will warn, and automatic updates are off." }
           gh release create "v$n" @files --repo $env:GITHUB_REPOSITORY --target $env:GITHUB_SHA --title "CFBTEL VPN $n" --notes $notes @extra
