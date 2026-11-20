@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"hash"
 	"io"
+	"strings"
 	"sync/atomic"
 
 	"golang.org/x/crypto/blake2b"
@@ -45,6 +46,11 @@ func (pm *progressHashWatcher) Write(p []byte) (int, error) {
 type UpdateFound struct {
 	name string
 	hash [blake2b.Size256]byte
+}
+
+// Version is the new version number, e.g. "1.0.7".
+func (u *UpdateFound) Version() string {
+	return strings.TrimSuffix(strings.TrimPrefix(u.name, fmt.Sprintf(msiArchPrefix, version.Arch())), msiSuffix)
 }
 
 func CheckForUpdate() (updateFound *UpdateFound, err error) {

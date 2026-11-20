@@ -57,18 +57,18 @@ func portal() (string, error) {
 }
 
 type signedInTunnel struct {
-	Name               string   `json:"name"`
-	Office             string   `json:"office"`
-	Device             string   `json:"device"`
-	Address            string   `json:"address"`
-	DNS                []string `json:"dns"`
-	MTU                int      `json:"mtu"`
-	PeerPublicKey      string   `json:"peer_public_key"`
-	PresharedKey       string   `json:"preshared_key"`
-	Endpoint           string   `json:"endpoint"`
-	AllowedIPs         []string `json:"allowed_ips"`
-	PersistentKeepalive int     `json:"persistent_keepalive"`
-	Error              string   `json:"error"`
+	Name                string   `json:"name"`
+	Office              string   `json:"office"`
+	Device              string   `json:"device"`
+	Address             string   `json:"address"`
+	DNS                 []string `json:"dns"`
+	MTU                 int      `json:"mtu"`
+	PeerPublicKey       string   `json:"peer_public_key"`
+	PresharedKey        string   `json:"preshared_key"`
+	Endpoint            string   `json:"endpoint"`
+	AllowedIPs          []string `json:"allowed_ips"`
+	PersistentKeepalive int      `json:"persistent_keepalive"`
+	Error               string   `json:"error"`
 }
 
 var safeConfValue = regexp.MustCompile(`^[A-Za-z0-9+/=:.,\[\]\-_ ]*$`)

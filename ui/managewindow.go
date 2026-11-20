@@ -7,6 +7,7 @@ package ui
 
 import (
 	"sync"
+	"time"
 	"unsafe"
 
 	"github.com/lxn/walk"
@@ -27,6 +28,7 @@ type ManageTunnelsWindow struct {
 	tunnelsPage *TunnelsPage
 	logPage     *LogPage
 	updatePage  *UpdatePage
+	tray        *Tray
 
 	tunnelChangedCB *manager.TunnelChangeCallback
 }
@@ -38,6 +40,9 @@ const (
 )
 
 var taskbarButtonCreatedMsg uint32
+
+// The window's one size (96 DPI); it can't be resized.
+var manageWindowSize = walk.Size{Width: 460, Height: 760}
 
 var initedManageTunnels sync.Once
 
@@ -61,7 +66,8 @@ func NewManageTunnelsWindow() (*ManageTunnelsWindow, error) {
 	mtw := new(ManageTunnelsWindow)
 	mtw.SetName("CFBTEL VPN")
 
-	err = walk.InitWindow(mtw, nil, manageWindowWindowClass, win.WS_OVERLAPPEDWINDOW, win.WS_EX_CONTROLPARENT)
+	// Fixed size, like a phone-style VPN client: no resizing, no maximize.
+	err = walk.InitWindow(mtw, nil, manageWindowWindowClass, win.WS_OVERLAPPEDWINDOW&^(win.WS_THICKFRAME|win.WS_MAXIMIZEBOX), win.WS_EX_CONTROLPARENT)
 	if err != nil {
 		return nil, err
 	}
@@ -74,8 +80,8 @@ func NewManageTunnelsWindow() (*ManageTunnelsWindow, error) {
 	}
 	mtw.SetTitle("CFBTEL VPN")
 	mtw.SetFont(font)
-	mtw.SetSize(walk.Size{580, 760})
-	mtw.SetMinMaxSize(walk.Size{460, 520}, walk.Size{0, 0})
+	mtw.SetMinMaxSize(manageWindowSize, manageWindowSize)
+	mtw.SetSize(manageWindowSize)
 	vlayout := walk.NewVBoxLayout()
 	vlayout.SetMargins(walk.Margins{5, 5, 5, 5})
 	mtw.SetLayout(vlayout)
@@ -107,6 +113,17 @@ func NewManageTunnelsWindow() (*ManageTunnelsWindow, error) {
 		return nil, err
 	}
 	mtw.tabs.Pages().Add(mtw.diagPage.TabPage)
+	mtw.homePage.OnInstalling = func() {
+		// The installer is about to replace the app: close the window (the tray says what's happening).
+		mtw.Hide()
+		if mtw.tray != nil {
+			if icon, err := loadLogoIcon(128); err == nil {
+				mtw.tray.ShowCustom(l18n.Sprintf("Updating CFBTEL VPN"), l18n.Sprintf("CFBTEL VPN is installing an update and opens again in about a minute."), icon)
+			}
+		}
+	}
+	// After an update the app starts again: reconnect the offices that were on.
+	time.AfterFunc(3*time.Second, func() { mtw.Synchronize(mtw.homePage.reconnectAfterUpdate) })
 	mtw.homePage.OpenDiagnostics = func() {
 		mtw.tabs.SetCurrentIndex(mtw.tabs.Pages().Index(mtw.diagPage.TabPage))
 		mtw.diagPage.Run(nil)
@@ -205,14 +222,7 @@ func (mtw *ManageTunnelsWindow) UpdateFound() {
 	if mtw.updatePage != nil {
 		return
 	}
-	if IsAdmin {
-		mtw.SetTitle(l18n.Sprintf("%s (out of date)", mtw.Title()))
-	}
-	updatePage, err := NewUpdatePage()
-	if err == nil {
-		mtw.updatePage = updatePage
-		mtw.tabs.Pages().Add(updatePage.TabPage)
-	}
+	// No separate "Update" tab: Home's footer and the tray offer it, always with the warning first.
 }
 
 func (mtw *ManageTunnelsWindow) WndProc(hwnd win.HWND, msg uint32, wParam, lParam uintptr) uintptr {

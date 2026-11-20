@@ -42,6 +42,7 @@ func NewTray(mtw *ManageTunnelsWindow) (*Tray, error) {
 		mtw:     mtw,
 		tunnels: make(map[string]*walk.Action),
 	}
+	mtw.tray = tray
 
 	tray.NotifyIcon, err = walk.NewNotifyIcon(mtw)
 	if err != nil {
@@ -352,10 +353,9 @@ func (tray *Tray) UpdateFound() {
 		if !tray.mtw.Visible() {
 			tray.mtw.tunnelsPage.listView.SelectFirstActiveTunnel()
 		}
-		if tray.mtw.updatePage != nil {
-			tray.mtw.tabs.SetCurrentIndex(tray.mtw.tabs.Pages().Index(tray.mtw.updatePage.TabPage))
-		}
+		tray.mtw.tabs.SetCurrentIndex(0) // Home
 		raise(tray.mtw.Handle())
+		tray.mtw.homePage.CheckForUpdates() // asks before closing and installing
 	}
 	action.Triggered().Attach(showUpdateTab)
 	tray.clicked = showUpdateTab

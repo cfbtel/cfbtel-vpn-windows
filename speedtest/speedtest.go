@@ -23,6 +23,15 @@ import (
 
 const DefaultBase = "https://speed.cloudflare.com"
 
+// ErrBusy: the speed test server keeps refusing (it limits how often one address may test).
+var ErrBusy = errors.New("Cloudflare's speed test is busy for your internet address right now. Wait a minute and try again.")
+
+func (t *Test) newRequest(ctx context.Context, method, url string, body io.Reader) *http.Request {
+	req, _ := http.NewRequestWithContext(ctx, method, url, body)
+	req.Header.Set("Referer", DefaultBase+"/")
+	return req
+}
+
 type Phase int
 
 const (
@@ -72,9 +81,9 @@ func New() *Test {
 		Pings:       20,
 		Duration:    10 * time.Second,
 		Warmup:      time.Second,
-		Streams:     6,
-		ChunkDown:   25_000_000,
-		ChunkUp:     5_000_000,
+		Streams:     4,
+		ChunkDown:   25_000_000, // largest piece; each stream starts at 1 MB and doubles
+		ChunkUp:     4_000_000,
 		ReportEvery: 200 * time.Millisecond,
 	}
 }
@@ -164,11 +173,15 @@ func (t *Test) latency(ctx context.Context, progress func(float64)) (ping, jitte
 			GotFirstResponseByte: func() { first = time.Now() },
 		}
 		rctx, cancel := context.WithTimeout(httptrace.WithClientTrace(ctx, trace), 5*time.Second)
-		req, _ := http.NewRequestWithContext(rctx, http.MethodGet, t.Base+"/__down?bytes=0", nil)
+		req := t.newRequest(rctx, http.MethodGet, t.Base+"/__down?bytes=0", nil)
 		resp, err := t.Client.Do(req)
 		if err == nil {
 			io.Copy(io.Discard, resp.Body)
 			resp.Body.Close()
+			if resp.StatusCode == http.StatusTooManyRequests {
+				cancel()
+				return 0, 0, ErrBusy
+			}
 			if resp.StatusCode != http.StatusOK {
 				err = fmt.Errorf("the speed test server answered %s", resp.Status)
 			}
@@ -235,19 +248,30 @@ func (t *Test) transfer(ctx context.Context, upload bool, progress func(f, mbps 
 	defer cancel()
 
 	var wg sync.WaitGroup
+	var refused atomic.Int64
 	for i := 0; i < t.Streams; i++ {
 		wg.Add(1)
-		go func() {
+		go func(i int) {
 			defer wg.Done()
+			// Stagger the streams and grow the pieces, like a browser test, so the server isn't hit all at once.
+			select {
+			case <-time.After(time.Duration(i) * 150 * time.Millisecond):
+			case <-tctx.Done():
+				return
+			}
 			buf := make([]byte, 64<<10)
+			chunk := min(int64(1_000_000), t.ChunkDown)
+			if upload {
+				chunk = min(int64(1_000_000), t.ChunkUp)
+			}
 			for tctx.Err() == nil {
 				var req *http.Request
 				if upload {
-					req, _ = http.NewRequestWithContext(tctx, http.MethodPost, t.Base+"/__up", &countingReader{left: t.ChunkUp, count: &count})
-					req.ContentLength = t.ChunkUp
+					req = t.newRequest(tctx, http.MethodPost, t.Base+"/__up", &countingReader{left: chunk, count: &count})
+					req.ContentLength = chunk
 					req.Header.Set("Content-Type", "application/octet-stream")
 				} else {
-					req, _ = http.NewRequestWithContext(tctx, http.MethodGet, fmt.Sprintf("%s/__down?bytes=%d", t.Base, t.ChunkDown), nil)
+					req = t.newRequest(tctx, http.MethodGet, fmt.Sprintf("%s/__down?bytes=%d", t.Base, chunk), nil)
 				}
 				resp, err := t.Client.Do(req)
 				if err != nil {
@@ -256,6 +280,17 @@ func (t *Test) transfer(ctx context.Context, upload bool, progress func(f, mbps 
 						cancel()
 					}
 					return
+				}
+				if resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500 {
+					// The server wants a pause: wait and try again instead of failing the whole test.
+					io.Copy(io.Discard, io.LimitReader(resp.Body, 64<<10))
+					resp.Body.Close()
+					refused.Add(1)
+					select {
+					case <-time.After(time.Second):
+					case <-tctx.Done():
+					}
+					continue
 				}
 				if !upload {
 					for {
@@ -275,8 +310,13 @@ func (t *Test) transfer(ctx context.Context, upload bool, progress func(f, mbps 
 					cancel()
 					return
 				}
+				limit := t.ChunkDown
+				if upload {
+					limit = t.ChunkUp
+				}
+				chunk = min(chunk*2, limit)
 			}
-		}()
+		}(i)
 	}
 
 	start := time.Now()
@@ -318,6 +358,9 @@ loop:
 	}
 	if e := failed.Load(); e != nil {
 		return 0, fmt.Errorf("speed test interrupted: %w", *e)
+	}
+	if count.Load() == 0 && refused.Load() > 0 {
+		return 0, ErrBusy
 	}
 	if counted < 0 {
 		counted, countedAt = 0, start

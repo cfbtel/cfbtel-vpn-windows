@@ -14,10 +14,13 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unsafe"
 
 	"github.com/lxn/walk"
 	"github.com/lxn/win"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
+	"golang.org/x/sys/windows/svc/mgr"
 
 	"golang.zx2c4.com/wireguard/windows/conf"
 	"golang.zx2c4.com/wireguard/windows/l18n"
@@ -26,7 +29,7 @@ import (
 	"golang.zx2c4.com/wireguard/windows/version"
 )
 
-// CFBTEL brand colours (logo navy and cyan).
+// CFBTEL brand colours (logo navy and cyan) and the dark Home theme built on them.
 var (
 	brandNavy      = walk.RGB(0x0E, 0x22, 0x38)
 	brandNavyLight = walk.RGB(0x17, 0x32, 0x4F)
@@ -42,6 +45,23 @@ var (
 	brandGreen     = walk.RGB(0x1D, 0x9E, 0x75)
 	brandAmber     = walk.RGB(0xBA, 0x75, 0x17)
 	brandGrey      = walk.RGB(0xB4, 0xC2, 0xCF)
+
+	darkBg        = walk.RGB(0x0E, 0x22, 0x38) // page
+	darkCard      = walk.RGB(0x13, 0x2C, 0x47) // the connection card and office rows
+	darkCardHover = walk.RGB(0x18, 0x36, 0x56)
+	darkTile      = walk.RGB(0x1E, 0x3A, 0x5C) // icon tile
+	darkLine      = walk.RGB(0x24, 0x40, 0x5F) // card border when off, separators
+	darkGrid      = walk.RGB(0x2A, 0x45, 0x66) // graph grid
+	darkText      = walk.RGB(0xFF, 0xFF, 0xFF)
+	darkText2     = walk.RGB(0xA9, 0xC1, 0xDA) // secondary, tinted from the navy (7.7:1 on the card)
+	darkText3     = walk.RGB(0x8F, 0xA9, 0xC4) // labels (5.8:1 on the card)
+	darkLinkText  = walk.RGB(0x7F, 0xD8, 0xF7)
+	darkDown      = walk.RGB(0x2F, 0xD3, 0xA0) // download / connected green
+	darkUp        = walk.RGB(0xF5, 0xA5, 0x24) // upload orange
+	darkWait      = walk.RGB(0xF5, 0xC5, 0x4A)
+	darkSlate     = walk.RGB(0x3B, 0x4D, 0x6B) // Disconnect button
+	darkSlateHi   = walk.RGB(0x47, 0x5B, 0x7C)
+	darkCyanHi    = walk.RGB(0x5C, 0xD3, 0xF7)
 )
 
 // The official CFBTEL wordmark (cyan), rendered from the company's SVG.
@@ -63,43 +83,48 @@ func wordmark() *walk.Bitmap {
 	return wordmarkBmp
 }
 
-// HomePage is the simple CFBTEL screen: status, one big button and the person's offices.
-// The full WireGuard tunnel editor stays on the "Advanced" tab.
+// HomePage is the CFBTEL screen: status and connected time, the connection card (office, one big button, live
+// traffic, details) and the person's other offices. The WireGuard tunnel editor stays on the "Advanced" tab.
 type HomePage struct {
 	*walk.TabPage
 
-	scroll  *walk.ScrollView
-	header  *walk.CustomWidget
-	offices *walk.CustomWidget
-	footer  *walk.LinkLabel
+	scroll *walk.ScrollView
+	view   *walk.CustomWidget
+	footer *walk.CustomWidget
 
 	mu       sync.Mutex
 	tunnels  []string
 	states   map[string]manager.TunnelState
 	address  map[string]string
+	endpoint map[string]string
+	dns      map[string]string
 	selected string
-	rx, tx   string // totals since connected
-	shake    string
-	update   bool
 
 	// Live traffic for the connected office.
 	statsFor       string
 	since          time.Time
+	rx, tx         string // totals
+	shake          string
 	prevRx, prevTx conf.Bytes
 	prevAt         time.Time
 	rxRate, txRate float64      // bytes per second, now
 	history        [][2]float64 // last minute of [rx, tx] bytes per second
 
-	buttonRect walk.Rectangle
-	rowRects   []walk.Rectangle
-	addRect    walk.Rectangle
+	details  bool
+	hover    string
+	targets  map[string]walk.Rectangle // clickable areas of the view, by name
+	ftargets map[string]walk.Rectangle // clickable areas of the footer
+	height   int
+
+	update    bool
+	updateMsg string
+	updating  bool
 
 	fonts map[string]*walk.Font
 
-	updateMsg string
-
-	// OpenDiagnostics switches to the Diagnostics tab (set by the window).
+	// Set by the window.
 	OpenDiagnostics func()
+	OnInstalling    func() // the installer is about to replace the app: hide the window
 
 	tunnelChangedCB  *manager.TunnelChangeCallback
 	tunnelsChangedCB *manager.TunnelsChangeCallback
@@ -112,7 +137,7 @@ func NewHomePage() (*HomePage, error) {
 	var disposables walk.Disposables
 	defer disposables.Treat()
 
-	hp := &HomePage{states: map[string]manager.TunnelState{}, address: map[string]string{}, stop: make(chan struct{})}
+	hp := &HomePage{states: map[string]manager.TunnelState{}, address: map[string]string{}, endpoint: map[string]string{}, dns: map[string]string{}, stop: make(chan struct{}), targets: map[string]walk.Rectangle{}, ftargets: map[string]walk.Rectangle{}}
 	if hp.TabPage, err = walk.NewTabPage(); err != nil {
 		return nil, err
 	}
@@ -122,93 +147,65 @@ func NewHomePage() (*HomePage, error) {
 	layout.SetMargins(walk.Margins{})
 	layout.SetSpacing(0)
 	hp.SetLayout(layout)
-	if bg, err := walk.NewSolidColorBrush(brandPage); err == nil {
-		hp.SetBackground(bg)
-	}
+	bg, _ := walk.NewSolidColorBrush(darkBg)
+	hp.SetBackground(bg)
 
 	hp.fonts = map[string]*walk.Font{}
 	for name, f := range map[string]struct {
 		size  int
 		style walk.FontStyle
-	}{"title": {16, walk.FontBold}, "sub": {10, 0}, "small": {8, 0}, "stat": {11, walk.FontBold}, "button": {11, walk.FontBold}, "row": {10, 0}, "rowSmall": {9, 0}} {
+	}{
+		"status": {15, walk.FontBold}, "timer": {12, 0}, "name": {12, walk.FontBold}, "sub": {9, 0},
+		"button": {12, walk.FontBold}, "small": {8, 0}, "rate": {10, walk.FontBold}, "label": {9, 0},
+		"value": {9, walk.FontBold}, "row": {10, 0}, "pill": {9, walk.FontBold}, "footer": {8, 0}, "help": {10, walk.FontBold},
+	} {
 		if font, err := walk.NewFont("Segoe UI", f.size, f.style); err == nil {
 			hp.fonts[name] = font
 		}
 	}
 
-	// Header and offices scroll when the window is short; the footer stays at the bottom.
+	// The view scrolls when "More details" makes it taller than the window; the footer stays at the bottom.
 	if hp.scroll, err = walk.NewScrollView(hp); err != nil {
 		return nil, err
 	}
-	hp.scroll.SetScrollbars(false, true)
+	// Both directions on: walk only lets a ScrollView grow sideways when horizontal scrolling is on. With
+	// vertical only it shrinks to its narrowest size and squeezes everything into a thin column.
+	hp.scroll.SetScrollbars(true, true)
 	inner := walk.NewVBoxLayout()
 	inner.SetMargins(walk.Margins{})
 	inner.SetSpacing(0)
 	hp.scroll.SetLayout(inner)
-	if bg, err := walk.NewSolidColorBrush(brandPage); err == nil {
-		hp.scroll.SetBackground(bg)
-	}
+	hp.scroll.SetBackground(bg)
 
-	if hp.header, err = walk.NewCustomWidgetPixels(hp.scroll, 0, hp.paintHeader); err != nil {
+	if hp.view, err = walk.NewCustomWidgetPixels(hp.scroll, 0, hp.paint); err != nil {
 		return nil, err
 	}
-	hp.header.SetPaintMode(walk.PaintBuffered)
-	hp.header.SetInvalidatesOnResize(true)
-	hp.header.SetMinMaxSize(walk.Size{Width: 0, Height: headerCompact}, walk.Size{Width: 0, Height: headerCompact})
-	hp.header.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
-		if button == walk.LeftButton && hit(hp.buttonRect, x, y) {
-			hp.onButton()
-		}
-	})
-	hp.header.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
-		if hit(hp.buttonRect, x, y) {
-			hp.header.SetCursor(walk.CursorHand())
-		} else {
-			hp.header.SetCursor(walk.CursorArrow())
-		}
-	})
-
-	if hp.offices, err = walk.NewCustomWidgetPixels(hp.scroll, 0, hp.paintOffices); err != nil {
-		return nil, err
-	}
-	hp.offices.SetPaintMode(walk.PaintBuffered)
-	hp.offices.SetInvalidatesOnResize(true)
-	hp.offices.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
+	hp.view.SetPaintMode(walk.PaintBuffered)
+	hp.view.SetInvalidatesOnResize(true)
+	hp.view.SetMinMaxSize(walk.Size{Height: 400}, walk.Size{Height: 400})
+	hp.view.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
 		if button == walk.LeftButton {
-			hp.onOfficeClick(x, y)
+			hp.onClick(hp.targetAt(hp.targets, x, y))
 		}
 	})
-	hp.offices.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
-		over := hit(hp.addRect, x, y)
-		for _, r := range hp.rowRects {
-			over = over || hit(r, x, y)
-		}
-		if over {
-			hp.offices.SetCursor(walk.CursorHand())
-		} else {
-			hp.offices.SetCursor(walk.CursorArrow())
-		}
+	hp.view.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
+		hp.setHover(hp.view, hp.targetAt(hp.targets, x, y))
 	})
 
-	if hp.footer, err = walk.NewLinkLabel(hp); err != nil {
+	if hp.footer, err = walk.NewCustomWidgetPixels(hp, 0, hp.paintFooter); err != nil {
 		return nil, err
 	}
-	hp.footer.SetAlignment(walk.AlignHNearVCenter)
-	hp.footer.LinkActivated().Attach(func(link *walk.LinkLabelLink) {
-		switch link.Id() {
-		case "help":
-			win.ShellExecute(hp.Form().Handle(), nil, windows.StringToUTF16Ptr("mailto:help@cfbtel.com?subject=CFBTEL%20VPN%20"+version.Number), nil, nil, win.SW_SHOWNORMAL)
-		case "about":
-			onAbout(hp.Form())
-		case "update":
-			hp.CheckForUpdates()
-		case "diag":
-			if hp.OpenDiagnostics != nil {
-				hp.OpenDiagnostics()
-			}
+	hp.footer.SetPaintMode(walk.PaintBuffered)
+	hp.footer.SetInvalidatesOnResize(true)
+	hp.footer.SetMinMaxSize(walk.Size{Height: 34}, walk.Size{Height: 34})
+	hp.footer.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
+		if button == walk.LeftButton {
+			hp.onClick(hp.targetAt(hp.ftargets, x, y))
 		}
 	})
-	hp.updateFooter()
+	hp.footer.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
+		hp.setHover(hp.footer, hp.targetAt(hp.ftargets, x, y))
+	})
 
 	hp.selected = walkSetting("HomeOffice")
 	hp.tunnelChangedCB = manager.IPCClientRegisterTunnelChange(func(tunnel *manager.Tunnel, state, globalState manager.TunnelState, err error) {
@@ -255,21 +252,56 @@ func hit(r walk.Rectangle, x, y int) bool {
 	return r.Width > 0 && x >= r.X && x < r.X+r.Width && y >= r.Y && y < r.Y+r.Height
 }
 
-func walkSetting(key string) string {
-	if s := walk.App().Settings(); s != nil {
-		v, _ := s.Get(key)
-		return v
+func (hp *HomePage) targetAt(targets map[string]walk.Rectangle, x, y int) string {
+	for name, r := range targets {
+		if hit(r, x, y) {
+			return name
+		}
 	}
 	return ""
 }
 
-func saveWalkSetting(key, value string) {
-	if s := walk.App().Settings(); s != nil {
-		s.Put(key, value)
+func (hp *HomePage) setHover(w *walk.CustomWidget, name string) {
+	if name != "" {
+		w.SetCursor(walk.CursorHand())
+	} else {
+		w.SetCursor(walk.CursorArrow())
+	}
+	if name != hp.hover {
+		hp.hover = name
+		hp.view.Invalidate()
+		hp.footer.Invalidate()
 	}
 }
 
-// reload reads the offices (tunnels), their state and VPN address from the manager.
+// UI settings (chosen office, support name/email, offices to reconnect after an update) live in
+// HKCU\Software\CFBTEL\VPN\UI. They are written at once, so they survive the installer closing the app.
+const uiSettingsKey = `Software\CFBTEL\VPN\UI`
+
+func walkSetting(key string) string {
+	k, err := registry.OpenKey(registry.CURRENT_USER, uiSettingsKey, registry.QUERY_VALUE)
+	if err != nil {
+		return ""
+	}
+	defer k.Close()
+	v, _, _ := k.GetStringValue(key)
+	return v
+}
+
+func saveWalkSetting(key, value string) {
+	k, _, err := registry.CreateKey(registry.CURRENT_USER, uiSettingsKey, registry.SET_VALUE)
+	if err != nil {
+		return
+	}
+	defer k.Close()
+	if value == "" {
+		k.DeleteValue(key)
+		return
+	}
+	k.SetStringValue(key, value)
+}
+
+// reload reads the offices (tunnels), their state, VPN address, office address and DNS from the manager.
 func (hp *HomePage) reload() {
 	tunnels, err := manager.IPCClientTunnels()
 	if err != nil {
@@ -277,20 +309,30 @@ func (hp *HomePage) reload() {
 	}
 	names := make([]string, 0, len(tunnels))
 	states := map[string]manager.TunnelState{}
-	address := map[string]string{}
+	address, endpoint, dns := map[string]string{}, map[string]string{}, map[string]string{}
 	for i := range tunnels {
 		t := tunnels[i]
 		names = append(names, t.Name)
 		if st, err := t.State(); err == nil {
 			states[t.Name] = st
 		}
-		if c, err := t.StoredConfig(); err == nil && len(c.Interface.Addresses) > 0 {
-			address[t.Name] = c.Interface.Addresses[0].Addr().String()
+		if c, err := t.StoredConfig(); err == nil {
+			if len(c.Interface.Addresses) > 0 {
+				address[t.Name] = c.Interface.Addresses[0].Addr().String()
+			}
+			if len(c.Peers) > 0 {
+				endpoint[t.Name] = c.Peers[0].Endpoint.String()
+			}
+			ds := make([]string, 0, len(c.Interface.DNS))
+			for _, d := range c.Interface.DNS {
+				ds = append(ds, d.String())
+			}
+			dns[t.Name] = strings.Join(ds, ", ")
 		}
 	}
 	sort.Slice(names, func(i, j int) bool { return strings.ToLower(names[i]) < strings.ToLower(names[j]) })
 	hp.mu.Lock()
-	hp.tunnels, hp.states, hp.address = names, states, address
+	hp.tunnels, hp.states, hp.address, hp.endpoint, hp.dns = names, states, address, endpoint, dns
 	if !contains(names, hp.selected) && len(names) > 0 {
 		hp.selected = names[0]
 	}
@@ -305,6 +347,39 @@ func contains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// tunnelStartTime is when the office's tunnel service started (for the connected timer), or zero.
+func tunnelStartTime(name string) time.Time {
+	svcName, err := conf.ServiceNameOfTunnel(name)
+	if err != nil {
+		return time.Time{}
+	}
+	m, err := mgr.ConnectRemote("")
+	if err != nil {
+		return time.Time{}
+	}
+	defer m.Disconnect()
+	h, err := windows.OpenService(m.Handle, windows.StringToUTF16Ptr(svcName), windows.SERVICE_QUERY_STATUS)
+	if err != nil {
+		return time.Time{}
+	}
+	defer windows.CloseServiceHandle(h)
+	var st windows.SERVICE_STATUS_PROCESS
+	var needed uint32
+	if windows.QueryServiceStatusEx(h, windows.SC_STATUS_PROCESS_INFO, (*byte)(unsafe.Pointer(&st)), uint32(unsafe.Sizeof(st)), &needed) != nil || st.ProcessId == 0 {
+		return time.Time{}
+	}
+	p, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, st.ProcessId)
+	if err != nil {
+		return time.Time{}
+	}
+	defer windows.CloseHandle(p)
+	var created, exited, kernel, user windows.Filetime
+	if windows.GetProcessTimes(p, &created, &exited, &kernel, &user) != nil {
+		return time.Time{}
+	}
+	return time.Unix(0, created.Nanoseconds())
 }
 
 // pollStats refreshes traffic, speed and handshake for the connected office every second.
@@ -336,13 +411,21 @@ func (hp *HomePage) pollStats() {
 			}
 		}
 		now := time.Now()
+		var startedAt time.Time
 		hp.mu.Lock()
-		if !ok || name != hp.statsFor || hp.states[name] != manager.TunnelStarted {
-			// New connection (or none): start counting again.
-			hp.statsFor, hp.history, hp.rxRate, hp.txRate = "", nil, 0, 0
-			hp.since = time.Time{}
-			if ok && hp.states[name] == manager.TunnelStarted {
-				hp.statsFor, hp.since = name, now
+		fresh := ok && hp.states[name] == manager.TunnelStarted && name != hp.statsFor
+		hp.mu.Unlock()
+		if fresh {
+			startedAt = tunnelStartTime(name) // outside the lock: it asks Windows
+		}
+		hp.mu.Lock()
+		if !ok || hp.states[name] != manager.TunnelStarted {
+			hp.statsFor, hp.history, hp.rxRate, hp.txRate, hp.since = "", nil, 0, 0, time.Time{}
+		} else if fresh {
+			hp.statsFor, hp.history, hp.rxRate, hp.txRate = name, nil, 0, 0
+			hp.since = startedAt
+			if hp.since.IsZero() || hp.since.After(now) {
+				hp.since = now
 			}
 		} else if dt := now.Sub(hp.prevAt).Seconds(); dt > 0 && r >= hp.prevRx && sent >= hp.prevTx {
 			hp.rxRate = float64(r-hp.prevRx) / dt
@@ -359,16 +442,24 @@ func (hp *HomePage) pollStats() {
 			hp.shake = shortHandshake(last)
 		}
 		hp.mu.Unlock()
-		hp.Synchronize(func() { hp.header.Invalidate() })
+		hp.Synchronize(func() { hp.view.Invalidate() })
 	}
 }
 
-// shortHandshake is "12s ago", "1m 49s ago", "2h 5m ago" or "Waiting".
+// shortHandshake is "~12 sec ago", "~2 min ago" or "Waiting for the office".
 func shortHandshake(t conf.HandshakeTime) string {
 	if t.IsEmpty() {
-		return l18n.Sprintf("Waiting")
+		return l18n.Sprintf("Waiting for the office")
 	}
-	return shortDuration(time.Since(time.Unix(0, 0).Add(time.Duration(t)))) + l18n.Sprintf(" ago")
+	d := time.Since(time.Unix(0, 0).Add(time.Duration(t)))
+	switch {
+	case d < time.Minute:
+		return l18n.Sprintf("~%d sec ago", max(1, int(d.Seconds())))
+	case d < time.Hour:
+		return l18n.Sprintf("~%d min ago", int(d.Minutes()))
+	default:
+		return l18n.Sprintf("~%d h ago", int(d.Hours()))
+	}
 }
 
 func shortDuration(d time.Duration) string {
@@ -387,18 +478,28 @@ func shortDuration(d time.Duration) string {
 	}
 }
 
-// rate shows bytes per second as bits per second, like speed tests do: "850 kbps", "12.4 Mbps", "1.02 Gbps".
-func rate(bytesPerSec float64) string {
-	bits := bytesPerSec * 8
+// clock is a connected time like "07:48:39".
+func clock(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	s := int(d.Seconds())
+	return fmt.Sprintf("%02d:%02d:%02d", s/3600, s/60%60, s%60)
+}
+
+// byteRate is bytes per second as "0 KB/s", "36.5 KB/s", "369 KB/s", "1.24 MB/s".
+func byteRate(b float64) string {
 	switch {
-	case bits >= 1e9:
-		return fmt.Sprintf("%.2f Gbps", bits/1e9)
-	case bits >= 1e7:
-		return fmt.Sprintf("%.0f Mbps", bits/1e6)
-	case bits >= 1e6:
-		return fmt.Sprintf("%.1f Mbps", bits/1e6)
+	case b >= 1<<20:
+		return fmt.Sprintf("%.2f MB/s", b/(1<<20))
+	case b >= 100<<10:
+		return fmt.Sprintf("%.0f KB/s", b/(1<<10))
+	case b >= 1<<10:
+		return fmt.Sprintf("%.1f KB/s", b/(1<<10))
+	case b > 0:
+		return fmt.Sprintf("%.2f KB/s", b/(1<<10))
 	default:
-		return fmt.Sprintf("%.0f kbps", bits/1e3)
+		return "0 KB/s"
 	}
 }
 
@@ -414,80 +515,59 @@ func (hp *HomePage) connected() string {
 	return ""
 }
 
-// Header heights (96 DPI): compact when not connected, with live traffic when connected.
-const (
-	headerCompact   = 196
-	headerConnected = 424
-)
-
+// repaint fits the view's height to its content and redraws it.
 func (hp *HomePage) repaint() {
-	name := hp.connected()
-	hp.mu.Lock()
-	rows := len(hp.tunnels)
-	live := name != "" && hp.states[name] == manager.TunnelStarted
-	hp.mu.Unlock()
-	hh := headerCompact
-	if live {
-		hh = headerConnected
+	if h := hp.contentHeight(); h != hp.height {
+		hp.height = h
+		hp.view.SetMinMaxSize(walk.Size{Height: h}, walk.Size{Height: h})
+		hp.scroll.RequestLayout()
 	}
-	hp.header.SetMinMaxSize(walk.Size{Width: 0, Height: hh}, walk.Size{Width: 0, Height: hh})
-	h := 52 + rows*44 + 44
-	hp.offices.SetMinMaxSize(walk.Size{Width: 0, Height: h}, walk.Size{Width: 0, Height: 0})
-	hp.scroll.RequestLayout()
-	hp.header.Invalidate()
-	hp.offices.Invalidate()
+	hp.view.Invalidate()
+	hp.footer.Invalidate()
 }
 
 func (hp *HomePage) UpdateFound() {
 	hp.update = true
-	hp.updateFooter()
+	hp.footer.Invalidate()
 }
 
-func (hp *HomePage) updateFooter() {
-	text := l18n.Sprintf("CFBTEL VPN %s", version.Number)
+func (hp *HomePage) setUpdateMsg(msg string) {
+	hp.updateMsg = msg
+	hp.footer.Invalidate()
+}
+
+func (hp *HomePage) onClick(target string) {
 	switch {
-	case hp.updateMsg != "":
-		text += " · " + hp.updateMsg
-	case hp.update:
-		text += l18n.Sprintf(" · a new version installs by itself")
-	}
-	text += ` · <a id="update" href="update">Check for updates</a> · <a id="diag" href="diag">Diagnostics</a> · <a id="help" href="mailto:help@cfbtel.com">Help</a> · <a id="about" href="about">About</a>`
-	hp.footer.SetText(text)
-}
-
-// CheckForUpdates looks for a newer CFBTEL VPN now and installs it if there is one. (The app also checks every
-// hour on its own and installs updates by itself.)
-func (hp *HomePage) CheckForUpdates() {
-	hp.updateMsg = l18n.Sprintf("checking for updates…")
-	hp.updateFooter()
-	go func() {
-		if err := manager.IPCClientUpdate(); err != nil {
-			hp.Synchronize(func() {
-				hp.updateMsg = l18n.Sprintf("couldn't check: %v", err)
-				hp.updateFooter()
-			})
+	case target == "button":
+		hp.onButton()
+	case target == "details":
+		hp.details = !hp.details
+		hp.repaint()
+	case target == "help", target == "diag":
+		if hp.OpenDiagnostics != nil {
+			hp.OpenDiagnostics()
 		}
-	}()
-}
-
-func (hp *HomePage) onUpdateProgress(dp updater.DownloadProgress) {
-	switch {
-	case dp.Error != nil && strings.Contains(dp.Error.Error(), "No update was found"):
-		hp.updateMsg = l18n.Sprintf("you have the latest version")
-	case dp.Error != nil && strings.Contains(dp.Error.Error(), "already in progress"):
-		hp.updateMsg = l18n.Sprintf("an update is already installing")
-	case dp.Error != nil:
-		hp.updateMsg = l18n.Sprintf("update failed: %v", dp.Error)
-	case dp.Complete:
-		hp.updateMsg = l18n.Sprintf("update installed, restarting…")
-	case dp.BytesTotal > 0:
-		hp.updateMsg = l18n.Sprintf("downloading update %d%%", dp.BytesDownloaded*100/dp.BytesTotal)
-	case dp.Activity == "Installing update":
-		hp.updateMsg = l18n.Sprintf("installing update…")
-	default:
-		return
+	case target == "add":
+		onSignIn(hp.Form())
+	case target == "update":
+		hp.CheckForUpdates()
+	case target == "mail":
+		win.ShellExecute(hp.Form().Handle(), nil, windows.StringToUTF16Ptr("mailto:help@cfbtel.com?subject=CFBTEL%20VPN%20"+version.Number), nil, nil, win.SW_SHOWNORMAL)
+	case target == "about":
+		onAbout(hp.Form())
+	case strings.HasPrefix(target, "office:"), strings.HasPrefix(target, "connect:"):
+		name := target[strings.Index(target, ":")+1:]
+		hp.mu.Lock()
+		hp.selected = name
+		state := hp.states[name]
+		hp.mu.Unlock()
+		saveWalkSetting("HomeOffice", name)
+		if strings.HasPrefix(target, "connect:") && (state == manager.TunnelStopped || state == manager.TunnelUnknown) {
+			hp.connect(name)
+			return
+		}
+		hp.repaint()
 	}
-	hp.updateFooter()
 }
 
 func (hp *HomePage) onButton() {
@@ -533,37 +613,6 @@ func (hp *HomePage) setState(name string, st manager.TunnelState) {
 	hp.repaint()
 }
 
-func (hp *HomePage) onOfficeClick(x, y int) {
-	if hit(hp.addRect, x, y) {
-		onSignIn(hp.Form())
-		return
-	}
-	hp.mu.Lock()
-	var name string
-	for i, r := range hp.rowRects {
-		if hit(r, x, y) && i < len(hp.tunnels) {
-			name = hp.tunnels[i]
-		}
-	}
-	state := hp.states[name]
-	hp.mu.Unlock()
-	if name == "" {
-		return
-	}
-	hp.mu.Lock()
-	hp.selected = name
-	hp.mu.Unlock()
-	saveWalkSetting("HomeOffice", name)
-	// The link on the right of a row connects (switches) to that office straight away.
-	if state == manager.TunnelStopped || state == manager.TunnelUnknown {
-		if r := hp.rowRects; len(r) > 0 && x > r[0].X+r[0].Width-hp.offices.IntFrom96DPI(110) {
-			hp.connect(name)
-			return
-		}
-	}
-	hp.repaint()
-}
-
 // displayName turns a tunnel name like "CFBTEL-CFBTEL-Office-Costa-Mesa" into "CFBTEL Office Costa Mesa".
 func displayName(name string) string {
 	words := strings.Fields(strings.NewReplacer("_", " ", "-", " ").Replace(name))
@@ -580,10 +629,9 @@ func displayName(name string) string {
 	return strings.Join(out, " ")
 }
 
-// column is the content column inside a widget of width w: 22px side margins, at most 560px wide, centred
-// when the window is wider (maximized), so the button and tiles never stretch across a big screen.
+// column is the content column inside a widget of width w: side margins, at most 560px wide, centred.
 func column(w int, s func(int) int) (x, width int) {
-	width = w - s(44)
+	width = w - s(40)
 	if max := s(560); width > max {
 		width = max
 	}
@@ -593,225 +641,600 @@ func column(w int, s func(int) int) (x, width int) {
 	return (w - width) / 2, width
 }
 
-func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
-	// The widget's own size. (Canvas.BoundsPixels is the whole screen's size, which pushed everything
-	// on the right out of the window.)
-	b := hp.header.ClientBoundsPixels()
-	s := func(v int) int { return hp.header.IntFrom96DPI(v) }
-	cx, cw := column(b.Width, s)
-	navy, _ := walk.NewSolidColorBrush(brandNavy)
-	defer navy.Dispose()
-	canvas.FillRectanglePixels(navy, b)
+// ---- layout ----
 
+// Heights in 96 DPI units. The view is: header (status, timer), the card, then the office list.
+const (
+	hHeader     = 106
+	hCardTop    = 88 // icon row
+	hButton     = 46
+	hGraph      = 100
+	hRates      = 26
+	hPill       = 32
+	hDetailRow  = 24
+	nDetails    = 5
+	hCardPad    = 18
+	hOfficesGap = 20
+	hOfficeRow  = 44
+)
+
+type homeState struct {
+	name, selected      string
+	state               manager.TunnelState
+	live, empty         bool
+	tunnels             []string
+	states              map[string]manager.TunnelState
+	addr, endpoint, dns string
+	rx, tx, shake       string
+	rxRate, txRate      float64
+	since               time.Time
+	history             [][2]float64
+}
+
+func (hp *HomePage) snapshot() homeState {
 	name := hp.connected()
 	hp.mu.Lock()
-	state := hp.states[name]
-	empty := len(hp.tunnels) == 0
-	selected := hp.selected
-	addr := hp.address[name]
-	rx, tx, shake := hp.rx, hp.tx, hp.shake
-	rxRate, txRate, since := hp.rxRate, hp.txRate, hp.since
-	history := append([][2]float64(nil), hp.history...)
-	hp.mu.Unlock()
-
-	// The CFBTEL wordmark, and a status dot on the right.
-	if wm := wordmark(); wm != nil {
-		h := s(30)
-		canvas.DrawImageStretchedPixels(wm, walk.Rectangle{X: cx - s(6), Y: s(14), Width: h * 360 / 96, Height: h})
+	defer hp.mu.Unlock()
+	st := homeState{
+		name: name, selected: hp.selected, state: hp.states[name], empty: len(hp.tunnels) == 0,
+		tunnels: append([]string(nil), hp.tunnels...), states: map[string]manager.TunnelState{},
+		rx: hp.rx, tx: hp.tx, shake: hp.shake, rxRate: hp.rxRate, txRate: hp.txRate, since: hp.since,
+		history: append([][2]float64(nil), hp.history...),
 	}
-	cyan, _ := walk.NewSolidColorBrush(brandCyan)
-	defer cyan.Dispose()
-	grey, _ := walk.NewSolidColorBrush(brandNavyLight)
-	defer grey.Dispose()
-	dotColor := brandMuted
-	switch state {
-	case manager.TunnelStarted:
-		dotColor = brandGreen
-	case manager.TunnelStarting, manager.TunnelStopping:
-		dotColor = brandAmber
+	for k, v := range hp.states {
+		st.states[k] = v
 	}
-	dot, _ := walk.NewSolidColorBrush(dotColor)
-	defer dot.Dispose()
-	canvas.FillEllipsePixels(dot, walk.Rectangle{X: cx + cw - s(12), Y: s(24), Width: s(12), Height: s(12)})
-
-	title, sub := l18n.Sprintf("Not connected"), ""
-	switch {
-	case empty:
-		title, sub = l18n.Sprintf("Welcome to CFBTEL VPN"), l18n.Sprintf("Sign in with your work account to add your office.")
-	case state == manager.TunnelStarted:
-		title, sub = l18n.Sprintf("Connected"), displayName(name)
-		if addr != "" {
-			sub += " · " + addr
-		}
-	case state == manager.TunnelStarting:
-		title, sub = l18n.Sprintf("Connecting…"), displayName(name)
-	case state == manager.TunnelStopping:
-		title, sub = l18n.Sprintf("Disconnecting…"), displayName(name)
-	default:
-		sub = l18n.Sprintf("Office: %s", displayName(selected))
+	shown := name
+	if shown == "" {
+		shown = hp.selected
 	}
-	canvas.DrawTextPixels(title, hp.fonts["title"], brandWhite, walk.Rectangle{X: cx, Y: s(60), Width: cw, Height: s(30)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-	canvas.DrawTextPixels(sub, hp.fonts["sub"], brandCyanText, walk.Rectangle{X: cx, Y: s(90), Width: cw, Height: s(22)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-
-	buttonY := s(124)
-	if state == manager.TunnelStarted {
-		// Live traffic: two rows of three tiles, then the last minute as a graph.
-		gap := s(10)
-		w := (cw - 2*gap) / 3
-		dash := func(v string) string {
-			if v == "" {
-				return "—"
-			}
-			return v
-		}
-		connectedFor := ""
-		if !since.IsZero() {
-			connectedFor = shortDuration(time.Since(since))
-		}
-		tiles := [][3]string{
-			{l18n.Sprintf("↓ Download now"), rate(rxRate), "cyan"},
-			{l18n.Sprintf("↑ Upload now"), rate(txRate), ""},
-			{l18n.Sprintf("Connected for"), dash(connectedFor), ""},
-			{l18n.Sprintf("Received in total"), dash(rx), ""},
-			{l18n.Sprintf("Sent in total"), dash(tx), ""},
-			{l18n.Sprintf("Last handshake"), dash(shake), ""},
-		}
-		for i, t := range tiles {
-			r := walk.Rectangle{X: cx + (i%3)*(w+gap), Y: s(124) + (i/3)*s(64), Width: w, Height: s(56)}
-			canvas.FillRoundedRectanglePixels(grey, r, walk.Size{Width: s(10), Height: s(10)})
-			canvas.DrawTextPixels(t[0], hp.fonts["small"], brandMuted, walk.Rectangle{X: r.X + s(12), Y: r.Y + s(8), Width: r.Width - s(16), Height: s(18)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-			color := brandWhite
-			if t[2] == "cyan" {
-				color = brandCyan
-			}
-			canvas.DrawTextPixels(t[1], hp.fonts["stat"], color, walk.Rectangle{X: r.X + s(12), Y: r.Y + s(27), Width: r.Width - s(16), Height: s(22)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-		}
-		hp.paintGraph(canvas, walk.Rectangle{X: cx, Y: s(256), Width: cw, Height: s(84)}, history, s)
-		buttonY = s(356)
-	}
-
-	// The one big button.
-	label, fill, ink := l18n.Sprintf("Connect"), brandCyan, brandNavy
-	switch {
-	case empty:
-		label = l18n.Sprintf("Sign in to CFBTEL")
-	case state == manager.TunnelStarted:
-		label, fill = l18n.Sprintf("Disconnect"), brandWhite
-	case state == manager.TunnelStarting || state == manager.TunnelStopping:
-		label, fill, ink = l18n.Sprintf("Please wait…"), brandNavyLight, brandMuted
-	default:
-		label = l18n.Sprintf("Connect to %s", displayName(selected))
-	}
-	hp.buttonRect = walk.Rectangle{X: cx, Y: buttonY, Width: cw, Height: s(48)}
-	btn, _ := walk.NewSolidColorBrush(fill)
-	defer btn.Dispose()
-	canvas.FillRoundedRectanglePixels(btn, hp.buttonRect, walk.Size{Width: s(12), Height: s(12)})
-	canvas.DrawTextPixels(label, hp.fonts["button"], ink, hp.buttonRect, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine|walk.TextEndEllipsis)
-	return nil
+	st.addr, st.endpoint, st.dns = hp.address[shown], hp.endpoint[shown], hp.dns[shown]
+	st.live = name != "" && st.state == manager.TunnelStarted
+	return st
 }
 
-// paintGraph draws the last minute of download (cyan) and upload (white) speed.
-func (hp *HomePage) paintGraph(canvas *walk.Canvas, r walk.Rectangle, history [][2]float64, s func(int) int) {
-	bg, _ := walk.NewSolidColorBrush(brandNavyLight)
-	defer bg.Dispose()
-	canvas.FillRoundedRectanglePixels(bg, r, walk.Size{Width: s(10), Height: s(10)})
-	peak := 0.0
-	for _, h := range history {
-		if h[0] > peak {
-			peak = h[0]
-		}
-		if h[1] > peak {
-			peak = h[1]
+func (hp *HomePage) cardHeight(st homeState) int {
+	h := hCardTop + hButton + hCardPad
+	if st.live {
+		h += 20 + hGraph + 14 + hRates + 14 + hPill
+		if hp.details {
+			h += 12 + nDetails*hDetailRow
 		}
 	}
-	canvas.DrawTextPixels(l18n.Sprintf("Traffic, last minute"), hp.fonts["small"], brandMuted, walk.Rectangle{X: r.X + s(12), Y: r.Y + s(6), Width: r.Width / 2, Height: s(16)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-	legend := l18n.Sprintf("peak %s", rate(peak))
-	canvas.DrawTextPixels(legend, hp.fonts["small"], brandMuted, walk.Rectangle{X: r.X + r.Width/2, Y: r.Y + s(6), Width: r.Width/2 - s(12), Height: s(16)}, walk.TextRight|walk.TextSingleLine|walk.TextEndEllipsis)
-	area := walk.Rectangle{X: r.X + s(12), Y: r.Y + s(26), Width: r.Width - s(24), Height: r.Height - s(34)}
-	if len(history) < 2 || peak <= 0 {
-		canvas.DrawTextPixels(l18n.Sprintf("Measuring…"), hp.fonts["small"], brandMuted, area, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+	return h
+}
+
+// contentHeight is the view's height in 96 DPI units.
+func (hp *HomePage) contentHeight() int {
+	st := hp.snapshot()
+	h := hHeader + hp.cardHeight(st)
+	if !st.empty {
+		h += hOfficesGap + 22 + len(st.tunnels)*hOfficeRow + 34
+	}
+	return h + 16
+}
+
+// ---- painting ----
+
+type painter struct {
+	c *walk.Canvas
+	s func(int) int
+}
+
+func (p painter) fill(color walk.Color, r walk.Rectangle, radius int) {
+	b, err := walk.NewSolidColorBrush(color)
+	if err != nil {
 		return
 	}
-	for series, color := range []walk.Color{brandCyan, brandWhite} {
-		brush, err := walk.NewSolidColorBrush(color)
-		if err != nil {
-			continue
-		}
-		pen, err := walk.NewGeometricPen(walk.PenSolid|walk.PenCapRound|walk.PenJoinRound, s(2), brush)
-		if err != nil {
-			brush.Dispose()
-			continue
-		}
-		pts := make([]walk.Point, 0, len(history))
-		for i, h := range history {
-			// Always 60 slots wide, newest on the right.
-			x := area.X + area.Width - (len(history)-1-i)*area.Width/59
-			y := area.Y + area.Height - int(h[series]/peak*float64(area.Height))
-			pts = append(pts, walk.Point{X: x, Y: y})
-		}
-		canvas.DrawPolylinePixels(pen, pts)
-		pen.Dispose()
-		brush.Dispose()
+	defer b.Dispose()
+	if radius > 0 {
+		p.c.FillRoundedRectanglePixels(b, r, walk.Size{Width: p.s(radius), Height: p.s(radius)})
+	} else {
+		p.c.FillRectanglePixels(b, r)
 	}
 }
 
-func (hp *HomePage) paintOffices(canvas *walk.Canvas, _ walk.Rectangle) error {
-	b := hp.offices.ClientBoundsPixels()
-	s := func(v int) int { return hp.offices.IntFrom96DPI(v) }
+func (p painter) outline(color walk.Color, width int, r walk.Rectangle, radius int) {
+	b, err := walk.NewSolidColorBrush(color)
+	if err != nil {
+		return
+	}
+	defer b.Dispose()
+	pen, err := walk.NewGeometricPen(walk.PenSolid|walk.PenInsideFrame, max(1, p.s(width)), b)
+	if err != nil {
+		return
+	}
+	defer pen.Dispose()
+	p.c.DrawRoundedRectanglePixels(pen, r, walk.Size{Width: p.s(radius), Height: p.s(radius)})
+}
+
+func (p painter) line(color walk.Color, width int, style walk.PenStyle, pts ...walk.Point) {
+	b, err := walk.NewSolidColorBrush(color)
+	if err != nil {
+		return
+	}
+	defer b.Dispose()
+	pen, err := walk.NewGeometricPen(style|walk.PenCapRound|walk.PenJoinRound, max(1, p.s(width)), b)
+	if err != nil {
+		return
+	}
+	defer pen.Dispose()
+	p.c.DrawPolylinePixels(pen, pts)
+}
+
+func (p painter) dot(color walk.Color, cx, cy, d int) {
+	b, err := walk.NewSolidColorBrush(color)
+	if err != nil {
+		return
+	}
+	defer b.Dispose()
+	p.c.FillEllipsePixels(b, walk.Rectangle{X: cx - d/2, Y: cy - d/2, Width: d, Height: d})
+}
+
+func (p painter) text(s string, font *walk.Font, color walk.Color, r walk.Rectangle, format walk.DrawTextFormat) {
+	p.c.DrawTextPixels(s, font, color, r, format|walk.TextSingleLine|walk.TextEndEllipsis|walk.TextNoPrefix)
+}
+
+func (p painter) textWidth(s string, font *walk.Font) int {
+	r, _, err := p.c.MeasureTextPixels(s, font, walk.Rectangle{Width: p.s(1000), Height: p.s(100)}, walk.TextSingleLine|walk.TextNoPrefix)
+	if err != nil {
+		return 0
+	}
+	return r.Width
+}
+
+// arrowBadge is the round down/up arrow before a speed (drawn, not a text glyph).
+func (p painter) arrowBadge(color walk.Color, cx, cy int, down bool) {
+	s := p.s
+	r := s(9)
+	b, _ := walk.NewSolidColorBrush(color)
+	if b == nil {
+		return
+	}
+	defer b.Dispose()
+	pen, err := walk.NewGeometricPen(walk.PenSolid, max(1, s(1)+s(1)/2), b)
+	if err != nil {
+		return
+	}
+	defer pen.Dispose()
+	p.c.DrawEllipsePixels(pen, walk.Rectangle{X: cx - r, Y: cy - r, Width: 2 * r, Height: 2 * r})
+	top, bottom := cy-s(4), cy+s(4)
+	if down {
+		p.line(color, 1, walk.PenSolid, walk.Point{X: cx, Y: top}, walk.Point{X: cx, Y: bottom})
+		p.line(color, 1, walk.PenSolid, walk.Point{X: cx - s(3), Y: bottom - s(3)}, walk.Point{X: cx, Y: bottom}, walk.Point{X: cx + s(3), Y: bottom - s(3)})
+	} else {
+		p.line(color, 1, walk.PenSolid, walk.Point{X: cx, Y: bottom}, walk.Point{X: cx, Y: top})
+		p.line(color, 1, walk.PenSolid, walk.Point{X: cx - s(3), Y: top + s(3)}, walk.Point{X: cx, Y: top}, walk.Point{X: cx + s(3), Y: top + s(3)})
+	}
+}
+
+// serverIcon: two stacked server units with status lights, drawn in the icon tile.
+func (p painter) serverIcon(tile walk.Rectangle) {
+	s := p.s
+	w, h := s(22), s(8)
+	x := tile.X + (tile.Width-w)/2
+	y := tile.Y + (tile.Height-2*h-s(4))/2
+	for i := 0; i < 2; i++ {
+		r := walk.Rectangle{X: x, Y: y + i*(h+s(4)), Width: w, Height: h}
+		p.outline(darkText, 2, r, 4)
+		p.dot(darkText, r.X+s(5), r.Y+r.Height/2, s(3))
+		p.dot(darkText, r.X+s(9), r.Y+r.Height/2, s(3))
+	}
+}
+
+func (hp *HomePage) paint(canvas *walk.Canvas, _ walk.Rectangle) error {
+	b := hp.view.ClientBoundsPixels()
+	s := func(v int) int { return hp.view.IntFrom96DPI(v) }
+	p := painter{canvas, s}
 	cx, cw := column(b.Width, s)
-	page, _ := walk.NewSolidColorBrush(brandPage)
-	defer page.Dispose()
-	canvas.FillRectanglePixels(page, b)
+	st := hp.snapshot()
+	targets := map[string]walk.Rectangle{}
+	p.fill(darkBg, b, 0)
 
-	hp.mu.Lock()
-	tunnels := append([]string(nil), hp.tunnels...)
-	states := map[string]manager.TunnelState{}
-	for k, v := range hp.states {
-		states[k] = v
+	// Wordmark, and a help button that opens Diagnostics.
+	if wm := wordmark(); wm != nil {
+		h := s(24)
+		canvas.DrawImageStretchedPixels(wm, walk.Rectangle{X: cx - s(4), Y: s(16), Width: h * 360 / 96, Height: h})
 	}
-	selected := hp.selected
-	hp.mu.Unlock()
-
-	canvas.DrawTextPixels(l18n.Sprintf("Your offices"), hp.fonts["rowSmall"], brandInkMuted, walk.Rectangle{X: cx, Y: s(16), Width: cw, Height: s(20)}, walk.TextLeft|walk.TextSingleLine)
-
-	white, _ := walk.NewSolidColorBrush(brandWhite)
-	defer white.Dispose()
-	sel, _ := walk.NewSolidColorBrush(walk.RGB(0xE6, 0xF6, 0xFD))
-	defer sel.Dispose()
-	border, _ := walk.NewCosmeticPen(walk.PenSolid, brandBorder)
-	defer border.Dispose()
-
-	rows := make([]walk.Rectangle, 0, len(tunnels))
-	y := s(42)
-	for _, n := range tunnels {
-		r := walk.Rectangle{X: cx, Y: y, Width: cw, Height: s(40)}
-		if n == selected {
-			canvas.FillRoundedRectanglePixels(sel, r, walk.Size{Width: s(8), Height: s(8)})
-		} else {
-			canvas.FillRoundedRectanglePixels(white, r, walk.Size{Width: s(8), Height: s(8)})
-		}
-		canvas.DrawRoundedRectanglePixels(border, r, walk.Size{Width: s(8), Height: s(8)})
-
-		dotColor, right, rightColor := brandGrey, l18n.Sprintf("Connect"), brandLink
-		switch states[n] {
-		case manager.TunnelStarted:
-			dotColor, right, rightColor = brandGreen, l18n.Sprintf("Connected"), brandGreen
-		case manager.TunnelStarting:
-			dotColor, right, rightColor = brandAmber, l18n.Sprintf("Connecting…"), brandAmber
-		case manager.TunnelStopping:
-			dotColor, right, rightColor = brandAmber, l18n.Sprintf("Disconnecting…"), brandAmber
-		}
-		dot, _ := walk.NewSolidColorBrush(dotColor)
-		canvas.FillEllipsePixels(dot, walk.Rectangle{X: r.X + s(14), Y: r.Y + s(16), Width: s(9), Height: s(9)})
-		dot.Dispose()
-		canvas.DrawTextPixels(displayName(n), hp.fonts["row"], brandInk, walk.Rectangle{X: r.X + s(34), Y: r.Y, Width: r.Width - s(34) - s(130), Height: r.Height}, walk.TextLeft|walk.TextVCenter|walk.TextSingleLine|walk.TextEndEllipsis)
-		canvas.DrawTextPixels(right, hp.fonts["rowSmall"], rightColor, walk.Rectangle{X: r.X + r.Width - s(124), Y: r.Y, Width: s(110), Height: r.Height}, walk.TextRight|walk.TextVCenter|walk.TextSingleLine)
-		rows = append(rows, r)
-		y += s(44)
+	help := walk.Rectangle{X: cx + cw - s(34), Y: s(12), Width: s(34), Height: s(34)}
+	targets["help"] = help
+	if hp.hover == "help" {
+		p.fill(darkCardHover, help, 10)
 	}
-	hp.rowRects = rows
+	p.outline(darkLine, 1, help, 10)
+	p.text("?", hp.fonts["help"], darkText, help, walk.TextCenter|walk.TextVCenter)
 
-	hp.addRect = walk.Rectangle{X: cx, Y: y + s(4), Width: s(220), Height: s(26)}
-	canvas.DrawTextPixels(l18n.Sprintf("+  Add an office (sign in)"), hp.fonts["rowSmall"], brandLink, hp.addRect, walk.TextLeft|walk.TextVCenter|walk.TextSingleLine)
+	// Status and connected time.
+	title, sub, subColor := l18n.Sprintf("Not connected"), l18n.Sprintf("Choose an office and connect"), darkText3
+	switch {
+	case st.empty:
+		title, sub = l18n.Sprintf("Welcome to CFBTEL VPN"), l18n.Sprintf("Sign in with your work account to add your office")
+	case st.live:
+		title, subColor = l18n.Sprintf("Securely connected"), darkText2
+		sub = clock(time.Since(st.since))
+		if st.since.IsZero() {
+			sub = ""
+		}
+	case st.state == manager.TunnelStarting:
+		title, sub = l18n.Sprintf("Connecting…"), l18n.Sprintf("Reaching %s", displayName(st.name))
+	case st.state == manager.TunnelStopping:
+		title, sub = l18n.Sprintf("Disconnecting…"), ""
+	}
+	p.text(title, hp.fonts["status"], darkText, walk.Rectangle{X: cx, Y: s(52), Width: cw, Height: s(30)}, walk.TextCenter)
+	p.text(sub, hp.fonts["timer"], subColor, walk.Rectangle{X: cx, Y: s(78), Width: cw, Height: s(22)}, walk.TextCenter)
+
+	// The card.
+	card := walk.Rectangle{X: cx, Y: s(hHeader), Width: cw, Height: s(hp.cardHeight(st))}
+	border := darkLine
+	switch {
+	case st.live:
+		border = darkDown
+	case st.state == manager.TunnelStarting || st.state == manager.TunnelStopping:
+		border = darkWait
+	}
+	p.fill(darkCard, card, 18)
+	p.outline(border, 1, card, 18)
+	in := walk.Rectangle{X: card.X + s(hCardPad), Y: card.Y + s(hCardPad), Width: card.Width - 2*s(hCardPad)}
+
+	tile := walk.Rectangle{X: in.X, Y: in.Y, Width: s(52), Height: s(52)}
+	p.fill(darkTile, tile, 12)
+	p.serverIcon(tile)
+	dotColor := darkText3
+	switch {
+	case st.live:
+		dotColor = darkDown
+	case st.state == manager.TunnelStarting || st.state == manager.TunnelStopping:
+		dotColor = darkWait
+	}
+	p.dot(darkCard, tile.X+tile.Width-s(2), tile.Y+tile.Height-s(2), s(16))
+	p.dot(dotColor, tile.X+tile.Width-s(2), tile.Y+tile.Height-s(2), s(11))
+
+	name, host := displayName(st.selected), st.endpoint
+	if st.name != "" {
+		name = displayName(st.name)
+	}
+	if st.empty {
+		name, host = l18n.Sprintf("No office yet"), l18n.Sprintf("Your administrator gives you access")
+	}
+	if i := strings.LastIndex(host, ":"); i > 0 && !st.empty {
+		host = host[:i]
+	}
+	tx := tile.X + tile.Width + s(14)
+	p.text(name, hp.fonts["name"], darkText, walk.Rectangle{X: tx, Y: tile.Y + s(4), Width: in.X + in.Width - tx, Height: s(24)}, walk.TextLeft)
+	p.text(host, hp.fonts["sub"], darkText2, walk.Rectangle{X: tx, Y: tile.Y + s(28), Width: in.X + in.Width - tx, Height: s(20)}, walk.TextLeft)
+
+	// The one big button.
+	btn := walk.Rectangle{X: in.X, Y: card.Y + s(hCardTop), Width: in.Width, Height: s(hButton)}
+	label, fill, ink := l18n.Sprintf("Connect"), brandCyan, darkBg
+	if hp.hover == "button" {
+		fill = darkCyanHi
+	}
+	switch {
+	case st.empty:
+		label = l18n.Sprintf("Sign in to CFBTEL")
+	case st.live:
+		label, fill, ink = l18n.Sprintf("Disconnect"), darkSlate, darkText
+		if hp.hover == "button" {
+			fill = darkSlateHi
+		}
+	case st.state == manager.TunnelStarting || st.state == manager.TunnelStopping:
+		label, fill, ink = l18n.Sprintf("Please wait…"), darkTile, darkText3
+	}
+	targets["button"] = btn
+	p.fill(fill, btn, 10)
+	p.text(label, hp.fonts["button"], ink, btn, walk.TextCenter|walk.TextVCenter)
+
+	if st.live {
+		y := btn.Y + btn.Height + s(20)
+		hp.paintGraph(p, walk.Rectangle{X: in.X, Y: y, Width: in.Width, Height: s(hGraph)}, st.history)
+		y += s(hGraph) + s(14)
+
+		// Speeds now and the last handshake.
+		third := in.Width / 3
+		rows := []struct {
+			color walk.Color
+			text  string
+			arrow int // 1 down, 2 up, 0 none
+		}{{darkDown, byteRate(st.rxRate), 1}, {darkUp, byteRate(st.txRate), 2}, {darkText, st.shake, 0}}
+		for i, r := range rows {
+			x := in.X + i*third
+			if r.arrow > 0 {
+				p.arrowBadge(r.color, x+s(10), y+s(hRates)/2, r.arrow == 1)
+				p.text(r.text, hp.fonts["rate"], r.color, walk.Rectangle{X: x + s(26), Y: y, Width: third - s(28), Height: s(hRates)}, walk.TextLeft|walk.TextVCenter)
+			} else {
+				p.text(r.text, hp.fonts["rate"], r.color, walk.Rectangle{X: x, Y: y, Width: in.X + in.Width - x, Height: s(hRates)}, walk.TextRight|walk.TextVCenter)
+			}
+		}
+		y += s(hRates) + s(14)
+
+		// More details.
+		pillText := l18n.Sprintf("More details")
+		if hp.details {
+			pillText = l18n.Sprintf("Fewer details")
+		}
+		pw := p.textWidth(pillText, hp.fonts["pill"]) + s(36)
+		pill := walk.Rectangle{X: in.X + (in.Width-pw)/2, Y: y, Width: pw, Height: s(hPill)}
+		targets["details"] = pill
+		if hp.hover == "details" {
+			p.fill(darkCardHover, pill, hPill)
+		}
+		p.outline(darkGrid, 1, pill, hPill)
+		p.text(pillText, hp.fonts["pill"], darkText, pill, walk.TextCenter|walk.TextVCenter)
+		y += s(hPill)
+
+		if hp.details {
+			y += s(12)
+			since := ""
+			if !st.since.IsZero() {
+				since = st.since.Format("3:04 PM") + " (" + shortDuration(time.Since(st.since)) + ")"
+			}
+			rows := [][2]string{
+				{l18n.Sprintf("Received in total"), st.rx},
+				{l18n.Sprintf("Sent in total"), st.tx},
+				{l18n.Sprintf("Connected since"), since},
+				{l18n.Sprintf("Your VPN address"), st.addr},
+				{l18n.Sprintf("Office address"), st.endpoint},
+			}
+			for i, r := range rows {
+				ry := y + i*s(hDetailRow)
+				if i > 0 {
+					p.line(darkLine, 1, walk.PenSolid, walk.Point{X: in.X, Y: ry}, walk.Point{X: in.X + in.Width, Y: ry})
+				}
+				p.text(r[0], hp.fonts["label"], darkText3, walk.Rectangle{X: in.X, Y: ry, Width: in.Width / 2, Height: s(hDetailRow)}, walk.TextLeft|walk.TextVCenter)
+				v := r[1]
+				if v == "" {
+					v = "—"
+				}
+				p.text(v, hp.fonts["value"], darkText, walk.Rectangle{X: in.X + in.Width/2, Y: ry, Width: in.Width / 2, Height: s(hDetailRow)}, walk.TextRight|walk.TextVCenter)
+			}
+		}
+	}
+
+	// Your offices.
+	if !st.empty {
+		y := card.Y + card.Height + s(hOfficesGap)
+		p.text(l18n.Sprintf("Your offices"), hp.fonts["label"], darkText3, walk.Rectangle{X: cx, Y: y, Width: cw, Height: s(20)}, walk.TextLeft|walk.TextVCenter)
+		y += s(22)
+		for _, n := range st.tunnels {
+			row := walk.Rectangle{X: cx, Y: y, Width: cw, Height: s(hOfficeRow - 6)}
+			key := "office:" + n
+			targets[key] = row
+			fill := darkCard
+			if hp.hover == key || hp.hover == "connect:"+n {
+				fill = darkCardHover
+			}
+			p.fill(fill, row, 10)
+			if n == st.selected {
+				p.outline(brandCyan, 1, row, 10)
+			}
+			dc, right, rc := darkText3, l18n.Sprintf("Connect"), darkLinkText
+			switch st.states[n] {
+			case manager.TunnelStarted:
+				dc, right, rc = darkDown, l18n.Sprintf("Connected"), darkDown
+			case manager.TunnelStarting:
+				dc, right, rc = darkWait, l18n.Sprintf("Connecting…"), darkWait
+			case manager.TunnelStopping:
+				dc, right, rc = darkWait, l18n.Sprintf("Disconnecting…"), darkWait
+			}
+			p.dot(dc, row.X+s(18), row.Y+row.Height/2, s(9))
+			rw := p.textWidth(right, hp.fonts["label"]) + s(28)
+			p.text(displayName(n), hp.fonts["row"], darkText, walk.Rectangle{X: row.X + s(34), Y: row.Y, Width: row.Width - s(34) - rw, Height: row.Height}, walk.TextLeft|walk.TextVCenter)
+			rr := walk.Rectangle{X: row.X + row.Width - rw, Y: row.Y, Width: rw - s(14), Height: row.Height}
+			p.text(right, hp.fonts["label"], rc, rr, walk.TextRight|walk.TextVCenter)
+			if right == l18n.Sprintf("Connect") {
+				targets["connect:"+n] = walk.Rectangle{X: rr.X - s(8), Y: row.Y, Width: rr.Width + s(22), Height: row.Height}
+				delete(targets, key)
+				targets[key] = walk.Rectangle{X: row.X, Y: row.Y, Width: rr.X - s(8) - row.X, Height: row.Height}
+			}
+			y += s(hOfficeRow)
+		}
+		add := walk.Rectangle{X: cx, Y: y, Width: s(200), Height: s(28)}
+		targets["add"] = add
+		color := darkLinkText
+		if hp.hover == "add" {
+			color = darkText
+		}
+		p.line(color, 2, walk.PenSolid, walk.Point{X: add.X + s(6), Y: add.Y + add.Height/2}, walk.Point{X: add.X + s(16), Y: add.Y + add.Height/2})
+		p.line(color, 2, walk.PenSolid, walk.Point{X: add.X + s(11), Y: add.Y + add.Height/2 - s(5)}, walk.Point{X: add.X + s(11), Y: add.Y + add.Height/2 + s(5)})
+		p.text(l18n.Sprintf("Add an office (sign in)"), hp.fonts["label"], color, walk.Rectangle{X: add.X + s(26), Y: add.Y, Width: add.Width - s(26), Height: add.Height}, walk.TextLeft|walk.TextVCenter)
+	}
+	hp.targets = targets
 	return nil
+}
+
+// paintGraph draws the last minute of download (green) and upload (orange) on dashed guide lines.
+func (hp *HomePage) paintGraph(p painter, r walk.Rectangle, history [][2]float64) {
+	s := p.s
+	peak := 0.0
+	for _, h := range history {
+		peak = max(peak, h[0], h[1])
+	}
+	labelH := s(18)
+	area := walk.Rectangle{X: r.X, Y: r.Y + labelH, Width: r.Width, Height: r.Height - labelH}
+	p.text(byteRate(peak), hp.fonts["small"], darkText3, walk.Rectangle{X: r.X, Y: r.Y, Width: r.Width, Height: labelH - s(2)}, walk.TextRight|walk.TextBottom)
+	p.line(darkGrid, 1, walk.PenSolid, walk.Point{X: area.X, Y: area.Y}, walk.Point{X: area.X + area.Width, Y: area.Y})
+	for i := 1; i <= 2; i++ {
+		y := area.Y + i*area.Height/3
+		p.line(darkGrid, 1, walk.PenDash, walk.Point{X: area.X, Y: y}, walk.Point{X: area.X + area.Width, Y: y})
+	}
+	base := area.Y + area.Height
+	p.line(darkLine, 2, walk.PenSolid, walk.Point{X: area.X, Y: base}, walk.Point{X: area.X + area.Width, Y: base})
+	if len(history) < 2 {
+		p.text(l18n.Sprintf("Measuring traffic…"), hp.fonts["small"], darkText3, area, walk.TextCenter|walk.TextVCenter)
+		return
+	}
+	if peak <= 0 {
+		peak = 1
+	}
+	top := area.Y + s(4)
+	h := base - top - s(2)
+	for _, series := range []struct {
+		i     int
+		color walk.Color
+	}{{1, darkUp}, {0, darkDown}} {
+		pts := make([]walk.Point, 0, len(history))
+		for i, v := range history {
+			x := area.X + area.Width - (len(history)-1-i)*area.Width/59
+			pts = append(pts, walk.Point{X: x, Y: base - s(2) - int(v[series.i]/peak*float64(h))})
+		}
+		p.line(series.color, 2, walk.PenSolid, pts...)
+	}
+}
+
+// paintFooter: version (or update progress), then Check for updates · Diagnostics · Help · About.
+func (hp *HomePage) paintFooter(canvas *walk.Canvas, _ walk.Rectangle) error {
+	b := hp.footer.ClientBoundsPixels()
+	s := func(v int) int { return hp.footer.IntFrom96DPI(v) }
+	p := painter{canvas, s}
+	p.fill(darkBg, b, 0)
+	p.line(darkLine, 1, walk.PenSolid, walk.Point{X: 0, Y: 0}, walk.Point{X: b.Width, Y: 0})
+	cx, cw := column(b.Width, s)
+
+	lead := l18n.Sprintf("CFBTEL VPN %s", version.Number)
+	switch {
+	case hp.updateMsg != "":
+		lead = hp.updateMsg
+	case hp.update:
+		lead += l18n.Sprintf(" · update ready")
+	}
+	items := []struct{ id, text string }{
+		{"update", l18n.Sprintf("Check for updates")}, {"diag", l18n.Sprintf("Diagnostics")},
+		{"mail", l18n.Sprintf("Help")}, {"about", l18n.Sprintf("About")},
+	}
+	font := hp.fonts["footer"]
+	gap := s(12)
+	x := cx + cw
+	targets := map[string]walk.Rectangle{}
+	for i := len(items) - 1; i >= 0; i-- {
+		w := p.textWidth(items[i].text, font)
+		x -= w
+		r := walk.Rectangle{X: x, Y: 0, Width: w, Height: b.Height}
+		targets[items[i].id] = r
+		color := darkLinkText
+		if hp.hover == items[i].id {
+			color = darkText
+		}
+		p.text(items[i].text, font, color, r, walk.TextLeft|walk.TextVCenter)
+		x -= gap
+	}
+	p.text(lead, font, darkText3, walk.Rectangle{X: cx, Y: 0, Width: max(0, x-cx-s(4)), Height: b.Height}, walk.TextLeft|walk.TextVCenter)
+	hp.ftargets = targets
+	return nil
+}
+
+// ---- updates ----
+
+// CheckForUpdates looks for a newer CFBTEL VPN now. If there is one, it asks, then disconnects, closes the
+// window and installs it; the app opens again afterwards and reconnects the offices that were on.
+func (hp *HomePage) CheckForUpdates() {
+	if hp.updating {
+		return
+	}
+	hp.setUpdateMsg(l18n.Sprintf("Checking for updates…"))
+	go func() {
+		u, err := updater.CheckForUpdate()
+		hp.Synchronize(func() {
+			switch {
+			case err != nil:
+				hp.setUpdateMsg(l18n.Sprintf("Couldn't check for updates"))
+				showErrorCustom(hp.Form(), l18n.Sprintf("Check for updates"), l18n.Sprintf("Couldn't check for updates: %v", err))
+			case u == nil:
+				hp.setUpdateMsg(l18n.Sprintf("You have the latest version (%s)", version.Number))
+			default:
+				hp.confirmUpdate(u.Version())
+			}
+		})
+	}()
+}
+
+func (hp *HomePage) confirmUpdate(newVersion string) {
+	var on []string
+	hp.mu.Lock()
+	for _, n := range hp.tunnels {
+		if st := hp.states[n]; st == manager.TunnelStarted || st == manager.TunnelStarting {
+			on = append(on, n)
+		}
+	}
+	hp.mu.Unlock()
+	text := l18n.Sprintf("CFBTEL VPN %s is ready to install. You have %s.\n\n", newVersion, version.Number)
+	if len(on) > 0 {
+		names := make([]string, len(on))
+		for i, n := range on {
+			names[i] = displayName(n)
+		}
+		text += l18n.Sprintf("To install it, the VPN (%s) will be disconnected and CFBTEL VPN will close. After about a minute it opens again and reconnects by itself.\n\n", strings.Join(names, ", "))
+	} else {
+		text += l18n.Sprintf("CFBTEL VPN will close while it installs and open again after about a minute.\n\n")
+	}
+	text += l18n.Sprintf("Install the update now?")
+	if walk.MsgBox(hp.Form(), l18n.Sprintf("Update CFBTEL VPN"), text, walk.MsgBoxYesNo|walk.MsgBoxIconQuestion|walk.MsgBoxDefButton1) != walk.DlgCmdYes {
+		hp.setUpdateMsg(l18n.Sprintf("Update %s waits — it installs by itself later", newVersion))
+		return
+	}
+	hp.updating = true
+	hp.setUpdateMsg(l18n.Sprintf("Disconnecting to update…"))
+	saveWalkSetting("ReconnectAfterUpdate", strings.Join(on, "\n"))
+	go func() {
+		for _, n := range on {
+			t := manager.Tunnel{Name: n}
+			t.Stop()
+		}
+		// Wait (up to 20 s) until the tunnels are down, then let the service download and install.
+		for i := 0; i < 40; i++ {
+			if gs, err := manager.IPCClientGlobalState(); err == nil && gs == manager.TunnelStopped {
+				break
+			}
+			time.Sleep(500 * time.Millisecond)
+		}
+		err := manager.IPCClientUpdate()
+		hp.Synchronize(func() {
+			if err != nil {
+				hp.updating = false
+				hp.setUpdateMsg(l18n.Sprintf("Update failed"))
+				showErrorCustom(hp.Form(), l18n.Sprintf("Update CFBTEL VPN"), err.Error())
+				hp.reconnectAfterUpdate()
+				return
+			}
+			hp.setUpdateMsg(l18n.Sprintf("Downloading the update…"))
+		})
+	}()
+}
+
+// reconnectAfterUpdate turns the offices that were on before an update back on (once).
+func (hp *HomePage) reconnectAfterUpdate() {
+	list := walkSetting("ReconnectAfterUpdate")
+	if list == "" {
+		return
+	}
+	saveWalkSetting("ReconnectAfterUpdate", "")
+	for _, n := range strings.Split(list, "\n") {
+		if n = strings.TrimSpace(n); n != "" {
+			hp.connect(n)
+		}
+	}
+}
+
+func (hp *HomePage) onUpdateProgress(dp updater.DownloadProgress) {
+	switch {
+	case dp.Error != nil && strings.Contains(dp.Error.Error(), "No update was found"):
+		hp.setUpdateMsg(l18n.Sprintf("You have the latest version (%s)", version.Number))
+	case dp.Error != nil && strings.Contains(dp.Error.Error(), "already in progress"):
+		hp.setUpdateMsg(l18n.Sprintf("An update is already installing"))
+	case dp.Error != nil:
+		hp.updating = false
+		hp.setUpdateMsg(l18n.Sprintf("Update failed"))
+		if hp.Form() != nil && hp.Form().Visible() {
+			showErrorCustom(hp.Form(), l18n.Sprintf("Update CFBTEL VPN"), l18n.Sprintf("The update didn't install: %v", dp.Error))
+		}
+		hp.reconnectAfterUpdate()
+	case dp.Complete:
+		hp.setUpdateMsg(l18n.Sprintf("Update installed, restarting…"))
+	case dp.BytesTotal > 0:
+		hp.setUpdateMsg(l18n.Sprintf("Downloading the update… %d%%", dp.BytesDownloaded*100/dp.BytesTotal))
+	case dp.Activity == "Installing update":
+		hp.setUpdateMsg(l18n.Sprintf("Installing the update…"))
+		if hp.OnInstalling != nil {
+			hp.OnInstalling()
+		}
+	}
 }

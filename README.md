@@ -26,11 +26,18 @@ What's different from upstream:
   The WireGuard tunnel editor and log are on the **Advanced** and **Log** tabs. The tray icon is faded when off.
   **Check for updates** is on Home and in the tray menu (anyone can install a newer signed release).
   The installer has a CFBTEL wizard (`installer/dialog.bmp`, `banner.bmp`, `license.rtf` from `ui/notices.txt`).
-* **Home** fits any window size (content column up to 560 px, centred when maximized; scrolls when short) and,
-  while connected, shows live download/upload speed, totals received/sent, connected time, last handshake and a
-  one-minute traffic graph.
+* **Fixed-size window** (460×760, no resize/maximize). **Home** is dark (navy), in the style of OpenVPN Connect:
+  status and connected timer (from the tunnel service's start time), one card with the office, one big
+  Connect/Disconnect button, live traffic graph (download green, upload orange), speeds now and last handshake,
+  *More details* (totals, connected since, VPN and office address), "Your offices", and a footer with Check for
+  updates · Diagnostics · Help · About. All drawn with GDI (`ui/homepage.go`); icons are drawn, not text glyphs.
+* **Updates with a warning**: *Check for updates* (Home footer, tray, update balloon) asks first: "the VPN will be
+  disconnected and CFBTEL VPN will close; it opens again in about a minute". On Yes it disconnects, the window
+  closes when the installer starts, and after the update the app reconnects the offices that were on.
+* UI settings live in `HKCU\Software\CFBTEL\VPN\UI` (chosen office, support name/email, reconnect list).
 * **Speed test** tab (`speedtest/`): ping, jitter, download and upload measured on Cloudflare's speed test network
-  (speed.cloudflare.com, ~25 s, 6 streams), live gauge, server/ISP/IP, notes whether it ran through the VPN;
+  (speed.cloudflare.com, ~25 s, 4 staggered streams with growing pieces; pauses and retries when Cloudflare
+  answers 429, and says it's busy only if nothing could be measured), live gauge, server/ISP/IP, notes whether it ran through the VPN;
   link to speedtest.net (Ookla's engine can't be built in without their license).
 * **Diagnostics** tab (`diag/`): internet, DNS, outbound UDP, CFBTEL service, other VPN adapters, and per office:
   address lookup, ping, the firewall side as AdmixCentral sees it (`POST /vpn/app/status`: firewall reachable,

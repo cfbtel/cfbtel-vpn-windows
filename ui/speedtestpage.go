@@ -24,9 +24,8 @@ import (
 type SpeedTestPage struct {
 	*walk.TabPage
 
-	view   *walk.CustomWidget
-	footer *walk.LinkLabel
-	vpn    func() string // the office the VPN is connected to, or ""
+	view *walk.CustomWidget
+	vpn  func() string // the office the VPN is connected to, or ""
 
 	mu       sync.Mutex
 	running  bool
@@ -37,6 +36,8 @@ type SpeedTestPage struct {
 	err      string
 
 	buttonRect walk.Rectangle
+	linkRect   walk.Rectangle
+	hover      string
 	fonts      map[string]*walk.Font
 }
 
@@ -55,7 +56,7 @@ func NewSpeedTestPage(vpn func() string) (*SpeedTestPage, error) {
 	layout.SetMargins(walk.Margins{})
 	layout.SetSpacing(0)
 	sp.SetLayout(layout)
-	if bg, err := walk.NewSolidColorBrush(brandPage); err == nil {
+	if bg, err := walk.NewSolidColorBrush(darkBg); err == nil {
 		sp.SetBackground(bg)
 	}
 	for name, f := range map[string]struct {
@@ -73,24 +74,33 @@ func NewSpeedTestPage(vpn func() string) (*SpeedTestPage, error) {
 	sp.view.SetPaintMode(walk.PaintBuffered)
 	sp.view.SetInvalidatesOnResize(true)
 	sp.view.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
-		if button == walk.LeftButton && hit(sp.buttonRect, x, y) {
+		if button != walk.LeftButton {
+			return
+		}
+		switch {
+		case hit(sp.buttonRect, x, y):
 			sp.onButton()
+		case hit(sp.linkRect, x, y):
+			win.ShellExecute(sp.Form().Handle(), nil, windows.StringToUTF16Ptr("https://www.speedtest.net/"), nil, nil, win.SW_SHOWNORMAL)
 		}
 	})
 	sp.view.MouseMove().Attach(func(x, y int, button walk.MouseButton) {
-		if hit(sp.buttonRect, x, y) {
+		h := ""
+		switch {
+		case hit(sp.buttonRect, x, y):
+			h = "button"
+		case hit(sp.linkRect, x, y):
+			h = "link"
+		}
+		if h != "" {
 			sp.view.SetCursor(walk.CursorHand())
 		} else {
 			sp.view.SetCursor(walk.CursorArrow())
 		}
-	})
-
-	if sp.footer, err = walk.NewLinkLabel(sp); err != nil {
-		return nil, err
-	}
-	sp.footer.SetText(l18n.Sprintf(`Measured on Cloudflare's speed test network · <a id="ookla" href="https://www.speedtest.net/">Open speedtest.net</a>`))
-	sp.footer.LinkActivated().Attach(func(link *walk.LinkLabelLink) {
-		win.ShellExecute(sp.Form().Handle(), nil, windows.StringToUTF16Ptr(link.URL()), nil, nil, win.SW_SHOWNORMAL)
+		if h != sp.hover {
+			sp.hover = h
+			sp.view.Invalidate()
+		}
 	})
 
 	disposables.Spare()
@@ -141,6 +151,8 @@ func (sp *SpeedTestPage) onButton() {
 		switch {
 		case errors.Is(err, context.Canceled):
 			sp.err = l18n.Sprintf("Test stopped.")
+		case errors.Is(err, speedtest.ErrBusy):
+			sp.err = err.Error()
 		case err != nil:
 			sp.err = err.Error()
 		default:
@@ -178,19 +190,12 @@ func ms(v float64) string {
 func (sp *SpeedTestPage) paint(canvas *walk.Canvas, _ walk.Rectangle) error {
 	b := sp.view.ClientBoundsPixels()
 	s := func(v int) int { return sp.view.IntFrom96DPI(v) }
+	p := painter{canvas, s}
 	cx, cw := column(b.Width, s)
-
-	page, _ := walk.NewSolidColorBrush(brandPage)
-	defer page.Dispose()
-	canvas.FillRectanglePixels(page, b)
-	navy, _ := walk.NewSolidColorBrush(brandNavy)
-	defer navy.Dispose()
-	canvas.FillRectanglePixels(navy, walk.Rectangle{Width: b.Width, Height: s(250)})
-	tile, _ := walk.NewSolidColorBrush(brandNavyLight)
-	defer tile.Dispose()
+	p.fill(darkBg, b, 0)
 
 	sp.mu.Lock()
-	running, p, through, errText := sp.running, sp.progress, sp.through, sp.err
+	running, prog, through, errText := sp.running, sp.progress, sp.through, sp.err
 	var res *speedtest.Result
 	if sp.result != nil {
 		r := *sp.result
@@ -201,77 +206,83 @@ func (sp *SpeedTestPage) paint(canvas *walk.Canvas, _ walk.Rectangle) error {
 		through = sp.vpn()
 	}
 
-	canvas.DrawTextPixels(l18n.Sprintf("Speed test"), sp.fonts["title"], brandWhite, walk.Rectangle{X: cx, Y: s(16), Width: cw, Height: s(28)}, walk.TextLeft|walk.TextSingleLine)
-	where := l18n.Sprintf("Your internet connection (VPN off)")
+	p.text(l18n.Sprintf("Speed test"), sp.fonts["title"], darkText, walk.Rectangle{X: cx, Y: s(18), Width: cw, Height: s(28)}, walk.TextLeft)
+	where := l18n.Sprintf("Your own internet connection (VPN off)")
 	if through != "" {
 		where = l18n.Sprintf("Through the VPN: %s", displayName(through))
 	}
-	canvas.DrawTextPixels(where, sp.fonts["sub"], brandCyanText, walk.Rectangle{X: cx, Y: s(44), Width: cw, Height: s(20)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+	p.text(where, sp.fonts["sub"], darkText2, walk.Rectangle{X: cx, Y: s(46), Width: cw, Height: s(20)}, walk.TextLeft)
 
-	// The big live number.
-	phase, big, unit := "", "", ""
+	// The live reading, in a card.
+	card := walk.Rectangle{X: cx, Y: s(80), Width: cw, Height: s(212)}
+	p.fill(darkCard, card, 18)
+	border := darkLine
+	if running {
+		border = brandCyan
+	}
+	p.outline(border, 1, card, 18)
+	phase, big, unit, bigColor := "", "", "", darkText
 	switch {
-	case running && p.Phase == speedtest.PhaseLatency:
-		phase, big, unit = l18n.Sprintf("Measuring ping…"), ms(p.Result.PingMs), "ms"
-	case running && p.Phase == speedtest.PhaseDownload:
-		phase, big, unit = l18n.Sprintf("↓ Download"), mbps(p.Mbps), "Mbps"
-	case running && p.Phase == speedtest.PhaseUpload:
-		phase, big, unit = l18n.Sprintf("↑ Upload"), mbps(p.Mbps), "Mbps"
+	case running && prog.Phase == speedtest.PhaseLatency:
+		phase, big, unit = l18n.Sprintf("Measuring ping"), ms(prog.Result.PingMs), "ms"
+	case running && prog.Phase == speedtest.PhaseDownload:
+		phase, big, unit, bigColor = l18n.Sprintf("Download"), mbps(prog.Mbps), "Mbps", darkDown
+	case running && prog.Phase == speedtest.PhaseUpload:
+		phase, big, unit, bigColor = l18n.Sprintf("Upload"), mbps(prog.Mbps), "Mbps", darkUp
 	case res != nil:
-		phase, big, unit = l18n.Sprintf("↓ Download"), mbps(res.DownMbps), "Mbps"
+		phase, big, unit, bigColor = l18n.Sprintf("Download"), mbps(res.DownMbps), "Mbps", darkDown
 	default:
 		phase, big, unit = l18n.Sprintf("Press Start to test your speed"), "—", ""
 	}
-	canvas.DrawTextPixels(phase, sp.fonts["sub"], brandMuted, walk.Rectangle{X: cx, Y: s(80), Width: cw, Height: s(20)}, walk.TextCenter|walk.TextSingleLine)
-	canvas.DrawTextPixels(big, sp.fonts["big"], brandWhite, walk.Rectangle{X: cx, Y: s(100), Width: cw, Height: s(56)}, walk.TextCenter|walk.TextSingleLine)
-	canvas.DrawTextPixels(unit, sp.fonts["unit"], brandCyanText, walk.Rectangle{X: cx, Y: s(154), Width: cw, Height: s(20)}, walk.TextCenter|walk.TextSingleLine)
+	p.text(phase, sp.fonts["sub"], darkText3, walk.Rectangle{X: card.X, Y: card.Y + s(18), Width: card.Width, Height: s(20)}, walk.TextCenter)
+	p.text(big, sp.fonts["big"], bigColor, walk.Rectangle{X: card.X, Y: card.Y + s(38), Width: card.Width, Height: s(56)}, walk.TextCenter|walk.TextVCenter)
+	p.text(unit, sp.fonts["unit"], darkText2, walk.Rectangle{X: card.X, Y: card.Y + s(94), Width: card.Width, Height: s(20)}, walk.TextCenter)
 
-	// Progress bar.
-	bar := walk.Rectangle{X: cx, Y: s(186), Width: cw, Height: s(6)}
-	canvas.FillRoundedRectanglePixels(tile, bar, walk.Size{Width: s(6), Height: s(6)})
-	if running && p.Fraction > 0 {
-		cyan, _ := walk.NewSolidColorBrush(brandCyan)
+	bar := walk.Rectangle{X: card.X + s(18), Y: card.Y + s(126), Width: card.Width - s(36), Height: s(6)}
+	p.fill(darkTile, bar, 6)
+	if running && prog.Fraction > 0 {
 		done := bar
-		done.Width = max(s(6), int(float64(bar.Width)*p.Fraction))
-		canvas.FillRoundedRectanglePixels(cyan, done, walk.Size{Width: s(6), Height: s(6)})
-		cyan.Dispose()
+		done.Width = max(s(6), int(float64(bar.Width)*prog.Fraction))
+		p.fill(brandCyan, done, 6)
 	}
 
-	// The button.
-	label, fill, ink := l18n.Sprintf("Start speed test"), brandCyan, brandNavy
+	label, fill, ink := l18n.Sprintf("Start speed test"), brandCyan, darkBg
+	if sp.hover == "button" {
+		fill = darkCyanHi
+	}
 	if running {
-		label, fill = l18n.Sprintf("Stop"), brandWhite
+		label, fill, ink = l18n.Sprintf("Stop"), darkSlate, darkText
+		if sp.hover == "button" {
+			fill = darkSlateHi
+		}
 	} else if res != nil || errText != "" {
 		label = l18n.Sprintf("Test again")
 	}
-	sp.buttonRect = walk.Rectangle{X: cx + cw/4, Y: s(204), Width: cw / 2, Height: s(36)}
-	btn, _ := walk.NewSolidColorBrush(fill)
-	canvas.FillRoundedRectanglePixels(btn, sp.buttonRect, walk.Size{Width: s(10), Height: s(10)})
-	btn.Dispose()
-	canvas.DrawTextPixels(label, sp.fonts["button"], ink, sp.buttonRect, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+	sp.buttonRect = walk.Rectangle{X: card.X + s(18), Y: card.Y + s(148), Width: card.Width - s(36), Height: s(46)}
+	p.fill(fill, sp.buttonRect, 10)
+	p.text(label, sp.fonts["button"], ink, sp.buttonRect, walk.TextCenter|walk.TextVCenter)
 
-	// Four result tiles.
-	r := p.Result
+	// Results: download, upload, ping, jitter.
+	r := prog.Result
 	if !running && res != nil {
 		r = *res
 	}
 	down, up := r.DownMbps, r.UpMbps
-	if running && p.Phase == speedtest.PhaseDownload {
-		down = p.Mbps
+	if running && prog.Phase == speedtest.PhaseDownload {
+		down = prog.Mbps
 	}
-	if running && p.Phase == speedtest.PhaseUpload {
-		up = p.Mbps
+	if running && prog.Phase == speedtest.PhaseUpload {
+		up = prog.Mbps
 	}
-	tiles := [][3]string{
-		{l18n.Sprintf("Download"), mbps(down), "Mbps"},
-		{l18n.Sprintf("Upload"), mbps(up), "Mbps"},
-		{l18n.Sprintf("Ping"), ms(r.PingMs), "ms"},
-		{l18n.Sprintf("Jitter"), ms(r.JitterMs), "ms"},
+	tiles := []struct {
+		label, value, unit string
+		color              walk.Color
+	}{
+		{l18n.Sprintf("Download"), mbps(down), "Mbps", darkDown},
+		{l18n.Sprintf("Upload"), mbps(up), "Mbps", darkUp},
+		{l18n.Sprintf("Ping"), ms(r.PingMs), "ms", darkText},
+		{l18n.Sprintf("Jitter"), ms(r.JitterMs), "ms", darkText},
 	}
-	white, _ := walk.NewSolidColorBrush(brandWhite)
-	defer white.Dispose()
-	border, _ := walk.NewCosmeticPen(walk.PenSolid, brandBorder)
-	defer border.Dispose()
 	gap := s(10)
 	cols := 4
 	if cw < s(400) {
@@ -279,36 +290,45 @@ func (sp *SpeedTestPage) paint(canvas *walk.Canvas, _ walk.Rectangle) error {
 	}
 	w := (cw - (cols-1)*gap) / cols
 	for i, t := range tiles {
-		rect := walk.Rectangle{X: cx + (i%cols)*(w+gap), Y: s(266) + (i/cols)*s(76), Width: w, Height: s(66)}
-		canvas.FillRoundedRectanglePixels(white, rect, walk.Size{Width: s(10), Height: s(10)})
-		canvas.DrawRoundedRectanglePixels(border, rect, walk.Size{Width: s(10), Height: s(10)})
-		canvas.DrawTextPixels(t[0], sp.fonts["label"], brandInkMuted, walk.Rectangle{X: rect.X + s(12), Y: rect.Y + s(8), Width: rect.Width - s(16), Height: s(16)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-		canvas.DrawTextPixels(t[1], sp.fonts["value"], brandInk, walk.Rectangle{X: rect.X + s(12), Y: rect.Y + s(26), Width: rect.Width - s(16), Height: s(26)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-		canvas.DrawTextPixels(t[2], sp.fonts["label"], brandInkMuted, walk.Rectangle{X: rect.X + s(12), Y: rect.Y + s(48), Width: rect.Width - s(16), Height: s(14)}, walk.TextLeft|walk.TextSingleLine)
+		rect := walk.Rectangle{X: cx + (i%cols)*(w+gap), Y: s(306) + (i/cols)*s(74), Width: w, Height: s(64)}
+		p.fill(darkCard, rect, 12)
+		p.text(t.label, sp.fonts["label"], darkText3, walk.Rectangle{X: rect.X + s(14), Y: rect.Y + s(9), Width: rect.Width - s(20), Height: s(16)}, walk.TextLeft)
+		vw := p.textWidth(t.value, sp.fonts["value"])
+		p.text(t.value, sp.fonts["value"], t.color, walk.Rectangle{X: rect.X + s(14), Y: rect.Y + s(28), Width: rect.Width - s(20), Height: s(26)}, walk.TextLeft)
+		p.text(t.unit, sp.fonts["label"], darkText3, walk.Rectangle{X: rect.X + s(14) + vw + s(5), Y: rect.Y + s(34), Width: max(0, rect.Width-s(24)-vw), Height: s(18)}, walk.TextLeft)
 	}
-	y := s(266) + ((len(tiles)+cols-1)/cols)*s(76) + s(4)
+	y := s(306) + ((len(tiles)+cols-1)/cols)*s(74) + s(6)
 
-	// Details.
+	if errText != "" {
+		canvas.DrawTextPixels(errText, sp.fonts["small"], walk.RGB(0xFF, 0x8A, 0x80), walk.Rectangle{X: cx, Y: y, Width: cw, Height: s(38)}, walk.TextLeft|walk.TextWordbreak|walk.TextEndEllipsis|walk.TextNoPrefix)
+		y += s(40)
+	}
 	var lines []string
 	if r.Server != "" {
 		lines = append(lines, l18n.Sprintf("Test server: Cloudflare %s", r.Server))
 	}
 	if r.ISP != "" || r.IP != "" {
-		lines = append(lines, l18n.Sprintf("Internet provider: %s · Address: %s", r.ISP, r.IP))
+		lines = append(lines, l18n.Sprintf("Provider: %s · %s", r.ISP, r.IP))
 	}
 	if !running && res != nil {
 		lines = append(lines, l18n.Sprintf("Tested %s", res.At.Format("Jan 2, 3:04 PM")))
 	}
-	if errText != "" {
-		canvas.DrawTextPixels(errText, sp.fonts["small"], walk.RGB(0xB4, 0x23, 0x18), walk.Rectangle{X: cx, Y: y, Width: cw, Height: s(36)}, walk.TextLeft|walk.TextWordbreak|walk.TextEndEllipsis)
-		y += s(38)
-	}
 	for _, line := range lines {
-		canvas.DrawTextPixels(line, sp.fonts["small"], brandInkMuted, walk.Rectangle{X: cx, Y: y, Width: cw, Height: s(18)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+		p.text(line, sp.fonts["small"], darkText2, walk.Rectangle{X: cx, Y: y, Width: cw, Height: s(18)}, walk.TextLeft)
 		y += s(20)
 	}
-	if through != "" {
-		canvas.DrawTextPixels(l18n.Sprintf("While connected, the test runs through your office's internet."), sp.fonts["small"], brandInkMuted, walk.Rectangle{X: cx, Y: y + s(4), Width: cw, Height: s(18)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+
+	// Footer: where it's measured, and speedtest.net.
+	fy := b.Height - s(30)
+	p.line(darkLine, 1, walk.PenSolid, walk.Point{X: 0, Y: fy - s(4)}, walk.Point{X: b.Width, Y: fy - s(4)})
+	link := l18n.Sprintf("Open speedtest.net")
+	lw := p.textWidth(link, sp.fonts["small"])
+	sp.linkRect = walk.Rectangle{X: cx + cw - lw, Y: fy, Width: lw, Height: s(26)}
+	lc := darkLinkText
+	if sp.hover == "link" {
+		lc = darkText
 	}
+	p.text(link, sp.fonts["small"], lc, sp.linkRect, walk.TextLeft|walk.TextVCenter)
+	p.text(l18n.Sprintf("Measured on Cloudflare's speed test network"), sp.fonts["small"], darkText3, walk.Rectangle{X: cx, Y: fy, Width: cw - lw - s(10), Height: s(26)}, walk.TextLeft|walk.TextVCenter)
 	return nil
 }

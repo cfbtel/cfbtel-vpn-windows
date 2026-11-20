@@ -2,10 +2,12 @@ package speedtest
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -102,5 +104,39 @@ func TestServerDown(t *testing.T) {
 	s.Close()
 	if _, err := quick(s.URL).Run(context.Background(), nil); err == nil {
 		t.Fatal("expected an error")
+	}
+}
+
+func TestBusyServerPausesInsteadOfFailing(t *testing.T) {
+	var n atomic.Int64
+	mux := http.NewServeMux()
+	mux.HandleFunc("/__down", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("bytes") != "0" && n.Add(1)%3 == 0 {
+			http.Error(w, "slow down", http.StatusTooManyRequests)
+			return
+		}
+		b, _ := strconv.Atoi(r.URL.Query().Get("bytes"))
+		w.Write(make([]byte, b))
+	})
+	mux.HandleFunc("/__up", func(w http.ResponseWriter, r *http.Request) { io.Copy(io.Discard, r.Body) })
+	s := httptest.NewServer(mux)
+	defer s.Close()
+	tt := quick(s.URL)
+	tt.Duration = 1500 * time.Millisecond
+	res, err := tt.Run(context.Background(), nil)
+	if err != nil || res.DownMbps <= 0 {
+		t.Fatalf("expected a result despite some 429s: %v %+v", err, res)
+	}
+}
+
+func TestAlwaysBusyServerSaysSo(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/__down", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "slow down", http.StatusTooManyRequests)
+	})
+	s := httptest.NewServer(mux)
+	defer s.Close()
+	if _, err := quick(s.URL).Run(context.Background(), nil); !errors.Is(err, ErrBusy) {
+		t.Fatalf("expected ErrBusy, got %v", err)
 	}
 }

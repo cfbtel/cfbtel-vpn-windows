@@ -94,7 +94,8 @@ func NewDiagnosticsPage(home *HomePage) (*DiagnosticsPage, error) {
 	if dp.scroll, err = walk.NewScrollView(dp); err != nil {
 		return nil, err
 	}
-	dp.scroll.SetScrollbars(false, true)
+	// Both on, or walk squeezes the ScrollView to its narrowest width (see HomePage).
+	dp.scroll.SetScrollbars(true, true)
 	inner := walk.NewVBoxLayout()
 	inner.SetMargins(walk.Margins{})
 	inner.SetSpacing(0)
@@ -148,6 +149,9 @@ func (dp *DiagnosticsPage) buildSupportForm() error {
 	if bg, err := walk.NewSolidColorBrush(brandPage); err == nil {
 		form.SetBackground(bg)
 	}
+	// Same column as the checks above: at most 560 px of content (+ margins), centred on wide windows.
+	form.SetMinMaxSize(walk.Size{}, walk.Size{Width: 604})
+	form.SetAlignment(walk.AlignHCenterVNear)
 
 	row := 0
 	label := func(text string, font *walk.Font, span int) *walk.TextLabel {
@@ -197,7 +201,7 @@ func (dp *DiagnosticsPage) buildSupportForm() error {
 	grid.SetRange(buttons, walk.Rectangle{X: 0, Y: row, Width: 2, Height: 1})
 	row++
 	dp.send, _ = walk.NewPushButton(buttons)
-	dp.send.SetText(l18n.Sprintf("&Send to CFBTEL support"))
+	dp.send.SetText(l18n.Sprintf("&Send to support"))
 	dp.send.Clicked().Attach(dp.onSend)
 	dp.copyBtn, _ = walk.NewPushButton(buttons)
 	dp.copyBtn.SetText(l18n.Sprintf("&Copy report"))
@@ -208,14 +212,12 @@ func (dp *DiagnosticsPage) buildSupportForm() error {
 		})
 	})
 	dp.save, _ = walk.NewPushButton(buttons)
-	dp.save.SetText(l18n.Sprintf("Sa&ve report…"))
+	dp.save.SetText(l18n.Sprintf("Sa&ve…"))
 	dp.save.Clicked().Attach(dp.onSave)
 	walk.NewHSpacer(buttons)
 
 	dp.status, _ = walk.NewTextLabel(form)
 	grid.SetRange(dp.status, walk.Rectangle{X: 0, Y: row, Width: 2, Height: 1})
-	row++
-	walk.NewVSpacer(form)
 	return nil
 }
 
