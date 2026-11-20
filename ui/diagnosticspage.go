@@ -599,8 +599,8 @@ func (dp *DiagnosticsPage) layout(canvas *walk.Canvas, width int) ([]checkLine, 
 			y += s(24)
 		}
 		dh := s(16)
-		if r, _, err := canvas.MeasureTextPixels(c.Detail, dp.fonts["detail"], walk.Rectangle{Width: cw - s(22), Height: s(400)}, walk.TextLeft|walk.TextWordbreak); err == nil && r.Height > 0 {
-			dh = r.Height
+		if h := wrappedHeight(canvas, c.Detail, dp.fonts["detail"], cw-s(22)); h > 0 {
+			dh = h
 		}
 		h := s(20) + dh + s(8)
 		lines = append(lines, checkLine{check: c, y: y, height: h})

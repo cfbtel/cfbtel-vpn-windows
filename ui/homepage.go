@@ -772,13 +772,7 @@ func (p painter) text(s string, font *walk.Font, color walk.Color, r walk.Rectan
 }
 
 func (p painter) textWidth(s string, font *walk.Font) int {
-	// TextCalcRect makes Windows return the text's real width; without it walk hands back the whole bounds, which
-	// made the "More details" button as wide as the window and squeezed office names out of their rows.
-	r, _, err := p.c.MeasureTextPixels(s, font, walk.Rectangle{Width: p.s(1000), Height: p.s(100)}, walk.TextCalcRect|walk.TextSingleLine|walk.TextNoPrefix)
-	if err != nil {
-		return 0
-	}
-	return r.Width
+	return textExtent(p.c, s, font) // GDI directly: see textmeasure.go
 }
 
 // arrowBadge is the round down/up arrow before a speed (drawn, not a text glyph).
