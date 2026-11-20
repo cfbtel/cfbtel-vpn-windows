@@ -22,6 +22,8 @@ type ManageTunnelsWindow struct {
 
 	tabs        *walk.TabWidget
 	homePage    *HomePage
+	speedPage   *SpeedTestPage
+	diagPage    *DiagnosticsPage
 	tunnelsPage *TunnelsPage
 	logPage     *LogPage
 	updatePage  *UpdatePage
@@ -72,7 +74,7 @@ func NewManageTunnelsWindow() (*ManageTunnelsWindow, error) {
 	}
 	mtw.SetTitle("CFBTEL VPN")
 	mtw.SetFont(font)
-	mtw.SetSize(walk.Size{560, 640})
+	mtw.SetSize(walk.Size{580, 760})
 	mtw.SetMinMaxSize(walk.Size{460, 520}, walk.Size{0, 0})
 	vlayout := walk.NewVBoxLayout()
 	vlayout.SetMargins(walk.Margins{5, 5, 5, 5})
@@ -95,6 +97,20 @@ func NewManageTunnelsWindow() (*ManageTunnelsWindow, error) {
 		return nil, err
 	}
 	mtw.tabs.Pages().Add(mtw.homePage.TabPage)
+
+	if mtw.speedPage, err = NewSpeedTestPage(mtw.homePage.connected); err != nil {
+		return nil, err
+	}
+	mtw.tabs.Pages().Add(mtw.speedPage.TabPage)
+
+	if mtw.diagPage, err = NewDiagnosticsPage(mtw.homePage); err != nil {
+		return nil, err
+	}
+	mtw.tabs.Pages().Add(mtw.diagPage.TabPage)
+	mtw.homePage.OpenDiagnostics = func() {
+		mtw.tabs.SetCurrentIndex(mtw.tabs.Pages().Index(mtw.diagPage.TabPage))
+		mtw.diagPage.Run(nil)
+	}
 
 	if mtw.tunnelsPage, err = NewTunnelsPage(); err != nil {
 		return nil, err

@@ -8,6 +8,7 @@ package ui
 import (
 	"bytes"
 	_ "embed"
+	"fmt"
 	"image/png"
 	"sort"
 	"strings"
@@ -67,6 +68,7 @@ func wordmark() *walk.Bitmap {
 type HomePage struct {
 	*walk.TabPage
 
+	scroll  *walk.ScrollView
 	header  *walk.CustomWidget
 	offices *walk.CustomWidget
 	footer  *walk.LinkLabel
@@ -76,9 +78,17 @@ type HomePage struct {
 	states   map[string]manager.TunnelState
 	address  map[string]string
 	selected string
-	rx, tx   string
+	rx, tx   string // totals since connected
 	shake    string
 	update   bool
+
+	// Live traffic for the connected office.
+	statsFor       string
+	since          time.Time
+	prevRx, prevTx conf.Bytes
+	prevAt         time.Time
+	rxRate, txRate float64      // bytes per second, now
+	history        [][2]float64 // last minute of [rx, tx] bytes per second
 
 	buttonRect walk.Rectangle
 	rowRects   []walk.Rectangle
@@ -87,6 +97,9 @@ type HomePage struct {
 	fonts map[string]*walk.Font
 
 	updateMsg string
+
+	// OpenDiagnostics switches to the Diagnostics tab (set by the window).
+	OpenDiagnostics func()
 
 	tunnelChangedCB  *manager.TunnelChangeCallback
 	tunnelsChangedCB *manager.TunnelsChangeCallback
@@ -123,12 +136,25 @@ func NewHomePage() (*HomePage, error) {
 		}
 	}
 
-	if hp.header, err = walk.NewCustomWidgetPixels(hp, 0, hp.paintHeader); err != nil {
+	// Header and offices scroll when the window is short; the footer stays at the bottom.
+	if hp.scroll, err = walk.NewScrollView(hp); err != nil {
 		return nil, err
 	}
-	hp.header.SetClearsBackground(true)
+	hp.scroll.SetScrollbars(false, true)
+	inner := walk.NewVBoxLayout()
+	inner.SetMargins(walk.Margins{})
+	inner.SetSpacing(0)
+	hp.scroll.SetLayout(inner)
+	if bg, err := walk.NewSolidColorBrush(brandPage); err == nil {
+		hp.scroll.SetBackground(bg)
+	}
+
+	if hp.header, err = walk.NewCustomWidgetPixels(hp.scroll, 0, hp.paintHeader); err != nil {
+		return nil, err
+	}
+	hp.header.SetPaintMode(walk.PaintBuffered)
 	hp.header.SetInvalidatesOnResize(true)
-	hp.header.SetMinMaxSize(walk.Size{Width: 0, Height: 268}, walk.Size{Width: 0, Height: 268})
+	hp.header.SetMinMaxSize(walk.Size{Width: 0, Height: headerCompact}, walk.Size{Width: 0, Height: headerCompact})
 	hp.header.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
 		if button == walk.LeftButton && hit(hp.buttonRect, x, y) {
 			hp.onButton()
@@ -142,10 +168,10 @@ func NewHomePage() (*HomePage, error) {
 		}
 	})
 
-	if hp.offices, err = walk.NewCustomWidgetPixels(hp, 0, hp.paintOffices); err != nil {
+	if hp.offices, err = walk.NewCustomWidgetPixels(hp.scroll, 0, hp.paintOffices); err != nil {
 		return nil, err
 	}
-	hp.offices.SetClearsBackground(true)
+	hp.offices.SetPaintMode(walk.PaintBuffered)
 	hp.offices.SetInvalidatesOnResize(true)
 	hp.offices.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
 		if button == walk.LeftButton {
@@ -176,6 +202,10 @@ func NewHomePage() (*HomePage, error) {
 			onAbout(hp.Form())
 		case "update":
 			hp.CheckForUpdates()
+		case "diag":
+			if hp.OpenDiagnostics != nil {
+				hp.OpenDiagnostics()
+			}
 		}
 	})
 	hp.updateFooter()
@@ -277,7 +307,7 @@ func contains(list []string, s string) bool {
 	return false
 }
 
-// pollStats refreshes traffic and handshake for the connected office every second.
+// pollStats refreshes traffic, speed and handshake for the connected office every second.
 func (hp *HomePage) pollStats() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
@@ -289,34 +319,86 @@ func (hp *HomePage) pollStats() {
 		case <-ticker.C:
 		}
 		name := hp.connected()
-		rx, tx, shake := "", "", ""
+		var r, sent conf.Bytes
+		var last conf.HandshakeTime
+		ok := false
 		if name != "" {
 			t := manager.Tunnel{Name: name}
 			if c, err := t.RuntimeConfig(); err == nil {
-				var r, s conf.Bytes
-				var last conf.HandshakeTime
+				ok = true
 				for _, p := range c.Peers {
 					r += p.RxBytes
-					s += p.TxBytes
+					sent += p.TxBytes
 					if p.LastHandshakeTime > last {
 						last = p.LastHandshakeTime
 					}
 				}
-				rx, tx = r.String(), s.String()
-				if last.IsEmpty() {
-					shake = l18n.Sprintf("Waiting")
-				} else {
-					shake = last.String()
-				}
 			}
 		}
+		now := time.Now()
 		hp.mu.Lock()
-		changed := rx != hp.rx || tx != hp.tx || shake != hp.shake
-		hp.rx, hp.tx, hp.shake = rx, tx, shake
-		hp.mu.Unlock()
-		if changed {
-			hp.Synchronize(func() { hp.header.Invalidate() })
+		if !ok || name != hp.statsFor || hp.states[name] != manager.TunnelStarted {
+			// New connection (or none): start counting again.
+			hp.statsFor, hp.history, hp.rxRate, hp.txRate = "", nil, 0, 0
+			hp.since = time.Time{}
+			if ok && hp.states[name] == manager.TunnelStarted {
+				hp.statsFor, hp.since = name, now
+			}
+		} else if dt := now.Sub(hp.prevAt).Seconds(); dt > 0 && r >= hp.prevRx && sent >= hp.prevTx {
+			hp.rxRate = float64(r-hp.prevRx) / dt
+			hp.txRate = float64(sent-hp.prevTx) / dt
+			hp.history = append(hp.history, [2]float64{hp.rxRate, hp.txRate})
+			if len(hp.history) > 60 {
+				hp.history = hp.history[len(hp.history)-60:]
+			}
 		}
+		hp.prevRx, hp.prevTx, hp.prevAt = r, sent, now
+		hp.rx, hp.tx, hp.shake = "", "", ""
+		if ok {
+			hp.rx, hp.tx = r.String(), sent.String()
+			hp.shake = shortHandshake(last)
+		}
+		hp.mu.Unlock()
+		hp.Synchronize(func() { hp.header.Invalidate() })
+	}
+}
+
+// shortHandshake is "12s ago", "1m 49s ago", "2h 5m ago" or "Waiting".
+func shortHandshake(t conf.HandshakeTime) string {
+	if t.IsEmpty() {
+		return l18n.Sprintf("Waiting")
+	}
+	return shortDuration(time.Since(time.Unix(0, 0).Add(time.Duration(t)))) + l18n.Sprintf(" ago")
+}
+
+func shortDuration(d time.Duration) string {
+	if d < 0 {
+		d = 0
+	}
+	d = d.Round(time.Second)
+	h, m, sec := int(d.Hours()), int(d.Minutes())%60, int(d.Seconds())%60
+	switch {
+	case h > 0:
+		return fmt.Sprintf("%dh %dm", h, m)
+	case m > 0:
+		return fmt.Sprintf("%dm %ds", m, sec)
+	default:
+		return fmt.Sprintf("%ds", sec)
+	}
+}
+
+// rate shows bytes per second as bits per second, like speed tests do: "850 kbps", "12.4 Mbps", "1.02 Gbps".
+func rate(bytesPerSec float64) string {
+	bits := bytesPerSec * 8
+	switch {
+	case bits >= 1e9:
+		return fmt.Sprintf("%.2f Gbps", bits/1e9)
+	case bits >= 1e7:
+		return fmt.Sprintf("%.0f Mbps", bits/1e6)
+	case bits >= 1e6:
+		return fmt.Sprintf("%.1f Mbps", bits/1e6)
+	default:
+		return fmt.Sprintf("%.0f kbps", bits/1e3)
 	}
 }
 
@@ -332,12 +414,26 @@ func (hp *HomePage) connected() string {
 	return ""
 }
 
+// Header heights (96 DPI): compact when not connected, with live traffic when connected.
+const (
+	headerCompact   = 196
+	headerConnected = 424
+)
+
 func (hp *HomePage) repaint() {
+	name := hp.connected()
 	hp.mu.Lock()
 	rows := len(hp.tunnels)
+	live := name != "" && hp.states[name] == manager.TunnelStarted
 	hp.mu.Unlock()
+	hh := headerCompact
+	if live {
+		hh = headerConnected
+	}
+	hp.header.SetMinMaxSize(walk.Size{Width: 0, Height: hh}, walk.Size{Width: 0, Height: hh})
 	h := 52 + rows*44 + 44
 	hp.offices.SetMinMaxSize(walk.Size{Width: 0, Height: h}, walk.Size{Width: 0, Height: 0})
+	hp.scroll.RequestLayout()
 	hp.header.Invalidate()
 	hp.offices.Invalidate()
 }
@@ -355,7 +451,7 @@ func (hp *HomePage) updateFooter() {
 	case hp.update:
 		text += l18n.Sprintf(" · a new version installs by itself")
 	}
-	text += ` · <a id="update" href="update">Check for updates</a> · <a id="help" href="mailto:help@cfbtel.com">Help</a> · <a id="about" href="about">About</a>`
+	text += ` · <a id="update" href="update">Check for updates</a> · <a id="diag" href="diag">Diagnostics</a> · <a id="help" href="mailto:help@cfbtel.com">Help</a> · <a id="about" href="about">About</a>`
 	hp.footer.SetText(text)
 }
 
@@ -468,13 +564,41 @@ func (hp *HomePage) onOfficeClick(x, y int) {
 	hp.repaint()
 }
 
+// displayName turns a tunnel name like "CFBTEL-CFBTEL-Office-Costa-Mesa" into "CFBTEL Office Costa Mesa".
 func displayName(name string) string {
-	return strings.NewReplacer("_", " ").Replace(name)
+	words := strings.Fields(strings.NewReplacer("_", " ", "-", " ").Replace(name))
+	out := make([]string, 0, len(words))
+	for _, w := range words {
+		if len(out) > 0 && strings.EqualFold(out[len(out)-1], w) {
+			continue
+		}
+		out = append(out, w)
+	}
+	if len(out) == 0 {
+		return name
+	}
+	return strings.Join(out, " ")
+}
+
+// column is the content column inside a widget of width w: 22px side margins, at most 560px wide, centred
+// when the window is wider (maximized), so the button and tiles never stretch across a big screen.
+func column(w int, s func(int) int) (x, width int) {
+	width = w - s(44)
+	if max := s(560); width > max {
+		width = max
+	}
+	if width < s(120) {
+		width = s(120)
+	}
+	return (w - width) / 2, width
 }
 
 func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
-	b := canvas.BoundsPixels()
+	// The widget's own size. (Canvas.BoundsPixels is the whole screen's size, which pushed everything
+	// on the right out of the window.)
+	b := hp.header.ClientBoundsPixels()
 	s := func(v int) int { return hp.header.IntFrom96DPI(v) }
+	cx, cw := column(b.Width, s)
 	navy, _ := walk.NewSolidColorBrush(brandNavy)
 	defer navy.Dispose()
 	canvas.FillRectanglePixels(navy, b)
@@ -486,12 +610,14 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 	selected := hp.selected
 	addr := hp.address[name]
 	rx, tx, shake := hp.rx, hp.tx, hp.shake
+	rxRate, txRate, since := hp.rxRate, hp.txRate, hp.since
+	history := append([][2]float64(nil), hp.history...)
 	hp.mu.Unlock()
 
 	// The CFBTEL wordmark, and a status dot on the right.
 	if wm := wordmark(); wm != nil {
 		h := s(30)
-		canvas.DrawImageStretchedPixels(wm, walk.Rectangle{X: s(16), Y: s(14), Width: h * 360 / 96, Height: h})
+		canvas.DrawImageStretchedPixels(wm, walk.Rectangle{X: cx - s(6), Y: s(14), Width: h * 360 / 96, Height: h})
 	}
 	cyan, _ := walk.NewSolidColorBrush(brandCyan)
 	defer cyan.Dispose()
@@ -506,7 +632,7 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 	}
 	dot, _ := walk.NewSolidColorBrush(dotColor)
 	defer dot.Dispose()
-	canvas.FillEllipsePixels(dot, walk.Rectangle{X: b.Width - s(36), Y: s(24), Width: s(12), Height: s(12)})
+	canvas.FillEllipsePixels(dot, walk.Rectangle{X: cx + cw - s(12), Y: s(24), Width: s(12), Height: s(12)})
 
 	title, sub := l18n.Sprintf("Not connected"), ""
 	switch {
@@ -524,25 +650,44 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 	default:
 		sub = l18n.Sprintf("Office: %s", displayName(selected))
 	}
-	textX := s(22)
-	canvas.DrawTextPixels(title, hp.fonts["title"], brandWhite, walk.Rectangle{X: textX, Y: s(60), Width: b.Width - textX - s(20), Height: s(30)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-	canvas.DrawTextPixels(sub, hp.fonts["sub"], brandCyanText, walk.Rectangle{X: textX, Y: s(90), Width: b.Width - textX - s(20), Height: s(22)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+	canvas.DrawTextPixels(title, hp.fonts["title"], brandWhite, walk.Rectangle{X: cx, Y: s(60), Width: cw, Height: s(30)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+	canvas.DrawTextPixels(sub, hp.fonts["sub"], brandCyanText, walk.Rectangle{X: cx, Y: s(90), Width: cw, Height: s(22)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
 
-	// Three stat tiles while connected.
+	buttonY := s(124)
 	if state == manager.TunnelStarted {
+		// Live traffic: two rows of three tiles, then the last minute as a graph.
 		gap := s(10)
-		w := (b.Width - s(44) - 2*gap) / 3
-		tiles := [][2]string{{l18n.Sprintf("Last handshake"), shake}, {l18n.Sprintf("Received"), rx}, {l18n.Sprintf("Sent"), tx}}
+		w := (cw - 2*gap) / 3
+		dash := func(v string) string {
+			if v == "" {
+				return "—"
+			}
+			return v
+		}
+		connectedFor := ""
+		if !since.IsZero() {
+			connectedFor = shortDuration(time.Since(since))
+		}
+		tiles := [][3]string{
+			{l18n.Sprintf("↓ Download now"), rate(rxRate), "cyan"},
+			{l18n.Sprintf("↑ Upload now"), rate(txRate), ""},
+			{l18n.Sprintf("Connected for"), dash(connectedFor), ""},
+			{l18n.Sprintf("Received in total"), dash(rx), ""},
+			{l18n.Sprintf("Sent in total"), dash(tx), ""},
+			{l18n.Sprintf("Last handshake"), dash(shake), ""},
+		}
 		for i, t := range tiles {
-			r := walk.Rectangle{X: s(22) + i*(w+gap), Y: s(124), Width: w, Height: s(54)}
+			r := walk.Rectangle{X: cx + (i%3)*(w+gap), Y: s(124) + (i/3)*s(64), Width: w, Height: s(56)}
 			canvas.FillRoundedRectanglePixels(grey, r, walk.Size{Width: s(10), Height: s(10)})
 			canvas.DrawTextPixels(t[0], hp.fonts["small"], brandMuted, walk.Rectangle{X: r.X + s(12), Y: r.Y + s(8), Width: r.Width - s(16), Height: s(18)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-			v := t[1]
-			if v == "" {
-				v = "—"
+			color := brandWhite
+			if t[2] == "cyan" {
+				color = brandCyan
 			}
-			canvas.DrawTextPixels(v, hp.fonts["stat"], brandWhite, walk.Rectangle{X: r.X + s(12), Y: r.Y + s(26), Width: r.Width - s(16), Height: s(22)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+			canvas.DrawTextPixels(t[1], hp.fonts["stat"], color, walk.Rectangle{X: r.X + s(12), Y: r.Y + s(27), Width: r.Width - s(16), Height: s(22)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
 		}
+		hp.paintGraph(canvas, walk.Rectangle{X: cx, Y: s(256), Width: cw, Height: s(84)}, history, s)
+		buttonY = s(356)
 	}
 
 	// The one big button.
@@ -557,7 +702,7 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 	default:
 		label = l18n.Sprintf("Connect to %s", displayName(selected))
 	}
-	hp.buttonRect = walk.Rectangle{X: s(22), Y: s(196), Width: b.Width - s(44), Height: s(48)}
+	hp.buttonRect = walk.Rectangle{X: cx, Y: buttonY, Width: cw, Height: s(48)}
 	btn, _ := walk.NewSolidColorBrush(fill)
 	defer btn.Dispose()
 	canvas.FillRoundedRectanglePixels(btn, hp.buttonRect, walk.Size{Width: s(12), Height: s(12)})
@@ -565,9 +710,55 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 	return nil
 }
 
+// paintGraph draws the last minute of download (cyan) and upload (white) speed.
+func (hp *HomePage) paintGraph(canvas *walk.Canvas, r walk.Rectangle, history [][2]float64, s func(int) int) {
+	bg, _ := walk.NewSolidColorBrush(brandNavyLight)
+	defer bg.Dispose()
+	canvas.FillRoundedRectanglePixels(bg, r, walk.Size{Width: s(10), Height: s(10)})
+	peak := 0.0
+	for _, h := range history {
+		if h[0] > peak {
+			peak = h[0]
+		}
+		if h[1] > peak {
+			peak = h[1]
+		}
+	}
+	canvas.DrawTextPixels(l18n.Sprintf("Traffic, last minute"), hp.fonts["small"], brandMuted, walk.Rectangle{X: r.X + s(12), Y: r.Y + s(6), Width: r.Width / 2, Height: s(16)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+	legend := l18n.Sprintf("peak %s", rate(peak))
+	canvas.DrawTextPixels(legend, hp.fonts["small"], brandMuted, walk.Rectangle{X: r.X + r.Width/2, Y: r.Y + s(6), Width: r.Width/2 - s(12), Height: s(16)}, walk.TextRight|walk.TextSingleLine|walk.TextEndEllipsis)
+	area := walk.Rectangle{X: r.X + s(12), Y: r.Y + s(26), Width: r.Width - s(24), Height: r.Height - s(34)}
+	if len(history) < 2 || peak <= 0 {
+		canvas.DrawTextPixels(l18n.Sprintf("Measuring…"), hp.fonts["small"], brandMuted, area, walk.TextCenter|walk.TextVCenter|walk.TextSingleLine)
+		return
+	}
+	for series, color := range []walk.Color{brandCyan, brandWhite} {
+		brush, err := walk.NewSolidColorBrush(color)
+		if err != nil {
+			continue
+		}
+		pen, err := walk.NewGeometricPen(walk.PenSolid|walk.PenCapRound|walk.PenJoinRound, s(2), brush)
+		if err != nil {
+			brush.Dispose()
+			continue
+		}
+		pts := make([]walk.Point, 0, len(history))
+		for i, h := range history {
+			// Always 60 slots wide, newest on the right.
+			x := area.X + area.Width - (len(history)-1-i)*area.Width/59
+			y := area.Y + area.Height - int(h[series]/peak*float64(area.Height))
+			pts = append(pts, walk.Point{X: x, Y: y})
+		}
+		canvas.DrawPolylinePixels(pen, pts)
+		pen.Dispose()
+		brush.Dispose()
+	}
+}
+
 func (hp *HomePage) paintOffices(canvas *walk.Canvas, _ walk.Rectangle) error {
-	b := canvas.BoundsPixels()
+	b := hp.offices.ClientBoundsPixels()
 	s := func(v int) int { return hp.offices.IntFrom96DPI(v) }
+	cx, cw := column(b.Width, s)
 	page, _ := walk.NewSolidColorBrush(brandPage)
 	defer page.Dispose()
 	canvas.FillRectanglePixels(page, b)
@@ -581,7 +772,7 @@ func (hp *HomePage) paintOffices(canvas *walk.Canvas, _ walk.Rectangle) error {
 	selected := hp.selected
 	hp.mu.Unlock()
 
-	canvas.DrawTextPixels(l18n.Sprintf("Your offices"), hp.fonts["rowSmall"], brandInkMuted, walk.Rectangle{X: s(22), Y: s(16), Width: b.Width - s(44), Height: s(20)}, walk.TextLeft|walk.TextSingleLine)
+	canvas.DrawTextPixels(l18n.Sprintf("Your offices"), hp.fonts["rowSmall"], brandInkMuted, walk.Rectangle{X: cx, Y: s(16), Width: cw, Height: s(20)}, walk.TextLeft|walk.TextSingleLine)
 
 	white, _ := walk.NewSolidColorBrush(brandWhite)
 	defer white.Dispose()
@@ -593,7 +784,7 @@ func (hp *HomePage) paintOffices(canvas *walk.Canvas, _ walk.Rectangle) error {
 	rows := make([]walk.Rectangle, 0, len(tunnels))
 	y := s(42)
 	for _, n := range tunnels {
-		r := walk.Rectangle{X: s(22), Y: y, Width: b.Width - s(44), Height: s(40)}
+		r := walk.Rectangle{X: cx, Y: y, Width: cw, Height: s(40)}
 		if n == selected {
 			canvas.FillRoundedRectanglePixels(sel, r, walk.Size{Width: s(8), Height: s(8)})
 		} else {
@@ -613,14 +804,14 @@ func (hp *HomePage) paintOffices(canvas *walk.Canvas, _ walk.Rectangle) error {
 		dot, _ := walk.NewSolidColorBrush(dotColor)
 		canvas.FillEllipsePixels(dot, walk.Rectangle{X: r.X + s(14), Y: r.Y + s(16), Width: s(9), Height: s(9)})
 		dot.Dispose()
-		canvas.DrawTextPixels(displayName(n), hp.fonts["row"], brandInk, walk.Rectangle{X: r.X + s(34), Y: r.Y, Width: r.Width - s(160), Height: r.Height}, walk.TextLeft|walk.TextVCenter|walk.TextSingleLine|walk.TextEndEllipsis)
+		canvas.DrawTextPixels(displayName(n), hp.fonts["row"], brandInk, walk.Rectangle{X: r.X + s(34), Y: r.Y, Width: r.Width - s(34) - s(130), Height: r.Height}, walk.TextLeft|walk.TextVCenter|walk.TextSingleLine|walk.TextEndEllipsis)
 		canvas.DrawTextPixels(right, hp.fonts["rowSmall"], rightColor, walk.Rectangle{X: r.X + r.Width - s(124), Y: r.Y, Width: s(110), Height: r.Height}, walk.TextRight|walk.TextVCenter|walk.TextSingleLine)
 		rows = append(rows, r)
 		y += s(44)
 	}
 	hp.rowRects = rows
 
-	hp.addRect = walk.Rectangle{X: s(22), Y: y + s(4), Width: s(220), Height: s(26)}
+	hp.addRect = walk.Rectangle{X: cx, Y: y + s(4), Width: s(220), Height: s(26)}
 	canvas.DrawTextPixels(l18n.Sprintf("+  Add an office (sign in)"), hp.fonts["rowSmall"], brandLink, hp.addRect, walk.TextLeft|walk.TextVCenter|walk.TextSingleLine)
 	return nil
 }

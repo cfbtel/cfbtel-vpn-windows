@@ -26,6 +26,19 @@ What's different from upstream:
   The WireGuard tunnel editor and log are on the **Advanced** and **Log** tabs. The tray icon is faded when off.
   **Check for updates** is on Home and in the tray menu (anyone can install a newer signed release).
   The installer has a CFBTEL wizard (`installer/dialog.bmp`, `banner.bmp`, `license.rtf` from `ui/notices.txt`).
+* **Home** fits any window size (content column up to 560 px, centred when maximized; scrolls when short) and,
+  while connected, shows live download/upload speed, totals received/sent, connected time, last handshake and a
+  one-minute traffic graph.
+* **Speed test** tab (`speedtest/`): ping, jitter, download and upload measured on Cloudflare's speed test network
+  (speed.cloudflare.com, ~25 s, 6 streams), live gauge, server/ISP/IP, notes whether it ran through the VPN;
+  link to speedtest.net (Ookla's engine can't be built in without their license).
+* **Diagnostics** tab (`diag/`): internet, DNS, outbound UDP, CFBTEL service, other VPN adapters, and per office:
+  address lookup, ping, the firewall side as AdmixCentral sees it (`POST /vpn/app/status`: firewall reachable,
+  tunnel and port, this device's peer present, device removed), address clashes with the local network, handshake
+  age, office DNS/gateway through the tunnel. **Send to CFBTEL support** posts the message, checks, device ID
+  (hashed MachineGuid), device public keys and the last 400 log lines to AdmixCentral (`POST /vpn/app/support`),
+  which stores the ticket and emails it to help@cfbtel.com with the report attached. If that fails, the app copies
+  the report, saves it to Documents and opens an email to help@cfbtel.com. No private or preshared keys are sent.
 * English UI.
 
 ## Releasing
