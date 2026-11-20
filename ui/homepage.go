@@ -6,6 +6,9 @@
 package ui
 
 import (
+	"bytes"
+	_ "embed"
+	"image/png"
 	"sort"
 	"strings"
 	"sync"
@@ -39,6 +42,25 @@ var (
 	brandAmber     = walk.RGB(0xBA, 0x75, 0x17)
 	brandGrey      = walk.RGB(0xB4, 0xC2, 0xCF)
 )
+
+// The official CFBTEL wordmark (cyan), rendered from the company's SVG.
+//
+//go:embed icon/wordmark.png
+var wordmarkPNG []byte
+
+var (
+	wordmarkOnce sync.Once
+	wordmarkBmp  *walk.Bitmap
+)
+
+func wordmark() *walk.Bitmap {
+	wordmarkOnce.Do(func() {
+		if img, err := png.Decode(bytes.NewReader(wordmarkPNG)); err == nil {
+			wordmarkBmp, _ = walk.NewBitmapFromImageForDPI(img, 96)
+		}
+	})
+	return wordmarkBmp
+}
 
 // HomePage is the simple CFBTEL screen: status, one big button and the person's offices.
 // The full WireGuard tunnel editor stays on the "Advanced" tab.
@@ -106,7 +128,7 @@ func NewHomePage() (*HomePage, error) {
 	}
 	hp.header.SetClearsBackground(true)
 	hp.header.SetInvalidatesOnResize(true)
-	hp.header.SetMinMaxSize(walk.Size{Width: 0, Height: 236}, walk.Size{Width: 0, Height: 236})
+	hp.header.SetMinMaxSize(walk.Size{Width: 0, Height: 268}, walk.Size{Width: 0, Height: 268})
 	hp.header.MouseUp().Attach(func(x, y int, button walk.MouseButton) {
 		if button == walk.LeftButton && hit(hp.buttonRect, x, y) {
 			hp.onButton()
@@ -466,20 +488,25 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 	rx, tx, shake := hp.rx, hp.tx, hp.shake
 	hp.mu.Unlock()
 
-	// Status badge: cyan circle with the logo.
-	badge := walk.Rectangle{X: s(22), Y: s(22), Width: s(52), Height: s(52)}
+	// The CFBTEL wordmark, and a status dot on the right.
+	if wm := wordmark(); wm != nil {
+		h := s(30)
+		canvas.DrawImageStretchedPixels(wm, walk.Rectangle{X: s(16), Y: s(14), Width: h * 360 / 96, Height: h})
+	}
 	cyan, _ := walk.NewSolidColorBrush(brandCyan)
 	defer cyan.Dispose()
 	grey, _ := walk.NewSolidColorBrush(brandNavyLight)
 	defer grey.Dispose()
-	if state == manager.TunnelStarted {
-		canvas.FillEllipsePixels(cyan, badge)
-	} else {
-		canvas.FillEllipsePixels(grey, badge)
+	dotColor := brandMuted
+	switch state {
+	case manager.TunnelStarted:
+		dotColor = brandGreen
+	case manager.TunnelStarting, manager.TunnelStopping:
+		dotColor = brandAmber
 	}
-	if logo, err := loadLogoIcon(32); err == nil {
-		canvas.DrawImageStretchedPixels(logo, walk.Rectangle{X: badge.X + s(10), Y: badge.Y + s(10), Width: s(32), Height: s(32)})
-	}
+	dot, _ := walk.NewSolidColorBrush(dotColor)
+	defer dot.Dispose()
+	canvas.FillEllipsePixels(dot, walk.Rectangle{X: b.Width - s(36), Y: s(24), Width: s(12), Height: s(12)})
 
 	title, sub := l18n.Sprintf("Not connected"), ""
 	switch {
@@ -497,9 +524,9 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 	default:
 		sub = l18n.Sprintf("Office: %s", displayName(selected))
 	}
-	textX := badge.X + badge.Width + s(16)
-	canvas.DrawTextPixels(title, hp.fonts["title"], brandWhite, walk.Rectangle{X: textX, Y: s(22), Width: b.Width - textX - s(20), Height: s(30)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
-	canvas.DrawTextPixels(sub, hp.fonts["sub"], brandCyanText, walk.Rectangle{X: textX, Y: s(52), Width: b.Width - textX - s(20), Height: s(22)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+	textX := s(22)
+	canvas.DrawTextPixels(title, hp.fonts["title"], brandWhite, walk.Rectangle{X: textX, Y: s(60), Width: b.Width - textX - s(20), Height: s(30)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
+	canvas.DrawTextPixels(sub, hp.fonts["sub"], brandCyanText, walk.Rectangle{X: textX, Y: s(90), Width: b.Width - textX - s(20), Height: s(22)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
 
 	// Three stat tiles while connected.
 	if state == manager.TunnelStarted {
@@ -507,7 +534,7 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 		w := (b.Width - s(44) - 2*gap) / 3
 		tiles := [][2]string{{l18n.Sprintf("Last handshake"), shake}, {l18n.Sprintf("Received"), rx}, {l18n.Sprintf("Sent"), tx}}
 		for i, t := range tiles {
-			r := walk.Rectangle{X: s(22) + i*(w+gap), Y: s(92), Width: w, Height: s(54)}
+			r := walk.Rectangle{X: s(22) + i*(w+gap), Y: s(124), Width: w, Height: s(54)}
 			canvas.FillRoundedRectanglePixels(grey, r, walk.Size{Width: s(10), Height: s(10)})
 			canvas.DrawTextPixels(t[0], hp.fonts["small"], brandMuted, walk.Rectangle{X: r.X + s(12), Y: r.Y + s(8), Width: r.Width - s(16), Height: s(18)}, walk.TextLeft|walk.TextSingleLine|walk.TextEndEllipsis)
 			v := t[1]
@@ -530,7 +557,7 @@ func (hp *HomePage) paintHeader(canvas *walk.Canvas, _ walk.Rectangle) error {
 	default:
 		label = l18n.Sprintf("Connect to %s", displayName(selected))
 	}
-	hp.buttonRect = walk.Rectangle{X: s(22), Y: s(164), Width: b.Width - s(44), Height: s(48)}
+	hp.buttonRect = walk.Rectangle{X: s(22), Y: s(196), Width: b.Width - s(44), Height: s(48)}
 	btn, _ := walk.NewSolidColorBrush(fill)
 	defer btn.Dispose()
 	canvas.FillRoundedRectanglePixels(btn, hp.buttonRect, walk.Size{Width: s(12), Height: s(12)})
