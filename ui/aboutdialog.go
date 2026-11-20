@@ -107,7 +107,7 @@ func runAboutDialog(owner walk.Form) error {
 	copyrightFont, _ := walk.NewFont("Segoe UI", 7, 0)
 	copyrightLbl.SetFont(copyrightFont)
 	copyrightLbl.SetTextAlignment(walk.AlignHCenterVNear)
-	copyrightLbl.SetText("CFBTEL VPN by CFBTEL. Based on WireGuard® for Windows 1.1.1.\nCopyright © 2015-2026 Jason A. Donenfeld. All Rights Reserved.\n\"WireGuard\" is a registered trademark of Jason A. Donenfeld.")
+	copyrightLbl.SetText("Copyright © 2026 CFBTEL. All rights reserved.\nHelp: help@cfbtel.com\n\nBuilt on open-source software: WireGuard® for Windows 1.1.1 (MIT License),\nWireGuardNT, Walk and Go. See \"Open-source licenses\".\n\"WireGuard\" is a registered trademark of Jason A. Donenfeld.")
 
 	buttonCP, err := walk.NewComposite(showingAboutDialog)
 	if err != nil {
@@ -124,17 +124,26 @@ func runAboutDialog(owner walk.Form) error {
 	closePB.SetAlignment(walk.AlignHCenterVNear)
 	closePB.SetText(l18n.Sprintf("Close"))
 	closePB.Clicked().Attach(showingAboutDialog.Accept)
+	licensesPB, err := walk.NewPushButton(buttonCP)
+	if err != nil {
+		return err
+	}
+	licensesPB.SetAlignment(walk.AlignHCenterVNear)
+	licensesPB.SetText(l18n.Sprintf("Open-source &licenses"))
+	licensesPB.Clicked().Attach(func() {
+		showError(runLicensesDialog(showingAboutDialog), showingAboutDialog)
+	})
 	donatePB, err := walk.NewPushButton(buttonCP)
 	if err != nil {
 		return err
 	}
 	donatePB.SetAlignment(walk.AlignHCenterVNear)
-	donatePB.SetText(l18n.Sprintf("CFBTEL &Support"))
+	donatePB.SetText(l18n.Sprintf("Email &help"))
 	donatePB.Clicked().Attach(func() {
 		if easterEggIndex == -1 {
 			easterEggIndex = 0
 		}
-		win.ShellExecute(showingAboutDialog.Handle(), nil, windows.StringToUTF16Ptr("https://www.cfbtel.com/"), nil, nil, win.SW_SHOWNORMAL)
+		win.ShellExecute(showingAboutDialog.Handle(), nil, windows.StringToUTF16Ptr("mailto:help@cfbtel.com?subject=CFBTEL%20VPN%20"+version.Number), nil, nil, win.SW_SHOWNORMAL)
 		showingAboutDialog.Accept()
 	})
 	walk.NewHSpacer(buttonCP)

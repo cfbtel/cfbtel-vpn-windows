@@ -15,14 +15,19 @@ What's different from upstream:
   added and turned on. The private key never leaves the computer. Server side: AdmixCentral `/vpn/app`.
 * **Updates from CFBTEL**: the built-in updater reads `latest.sig` from the latest release of this repository,
   verifies it with CFBTEL's release key (Ed25519, signify format) and the MSI's BLAKE2b hash, and only runs on
-  builds signed with CFBTEL's code-signing certificate.
+  builds signed with CFBTEL's code-signing certificate. It checks about every hour and **installs updates by
+  itself**: right away when no tunnel is connected, otherwise at the next idle moment and within 24 hours at most
+  (tunnels reconnect after the upgrade). People can also click **Update now**. Turn automatic installs off with
+  `HKLM\Software\CFBTEL\VPN\DisableAutoUpdate` = 1 (DWORD); updates are then only offered.
+* **About**: CFBTEL copyright, help@cfbtel.com, and **Open-source licenses** (`ui/notices.txt`: WireGuard for
+  Windows MIT, WireGuardNT Prebuilt Binaries License, Walk/win/Go BSD-3). Keep it current when dependencies change.
 * English UI.
 
 ## Releasing
 
 1. Raise `Number` in `version/version.go` (e.g. `1.0.1`) and push to `main`.
 2. The **Build and release** workflow builds x86/amd64/arm64, signs programs and MSIs, writes `latest.sig` and
-   publishes release `v1.0.1`. Installed copies offer the update (tray notification, Update tab).
+   publishes release `v1.0.1`. Installed copies install it automatically (see above).
 
 Repository secrets (Settings → Secrets and variables → Actions):
 
@@ -30,11 +35,13 @@ Repository secrets (Settings → Secrets and variables → Actions):
 |---|---|
 | `CFBTEL_RELEASE_KEY` | private key from `tools/releasesign` (double-click the Windows build: it copies the private key to the clipboard and shows the public key for `updater/constants.go`) |
 | `CFBTEL_PORTAL_URL` | `https://<staff VPN page host>`; kept out of the source |
-| `CFBTEL_CODESIGN_PFX` | base64 of the code-signing `.pfx` |
-| `CFBTEL_CODESIGN_PASSWORD` | its password |
 
-Without the code-signing secrets the release is an unsigned pre-release: it installs (SmartScreen warns) but
-doesn't update itself.
+Code signing uses **Microsoft Artifact Signing** (account `signalage-signing`, profile `signalage-public`,
+certificate name `CFBTEL`) through the Entra app "CFBTEL VPN GitHub signing" (GitHub OpenID Connect, no secret).
+Repository variables: `AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, `ARTIFACT_SIGNING_ENDPOINT`,
+`ARTIFACT_SIGNING_ACCOUNT`, `ARTIFACT_SIGNING_PROFILE`, `CFBTEL_SIGNER`. (A `.pfx` in secrets
+`CFBTEL_CODESIGN_PFX` / `CFBTEL_CODESIGN_PASSWORD` also works.) Without code signing the release is an unsigned
+pre-release: it installs (SmartScreen warns) but doesn't update itself.
 
 ## Building locally
 

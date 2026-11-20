@@ -33,7 +33,7 @@ BEGIN
       VALUE "FileDescription", "CFBTEL VPN"
       VALUE "FileVersion", EXPAND(WIREGUARD_VERSION_STR)
       VALUE "InternalName", "cfbtelvpn"
-      VALUE "LegalCopyright", "Copyright © 2015-2026 Jason A. Donenfeld. All Rights Reserved. CFBTEL VPN branding © CFBTEL."
+      VALUE "LegalCopyright", "Copyright © 2026 CFBTEL. All rights reserved. Includes WireGuard for Windows, © 2015-2026 Jason A. Donenfeld (MIT License)."
       VALUE "OriginalFilename", "cfbtelvpn.exe"
       VALUE "ProductName", "CFBTEL VPN"
       VALUE "ProductVersion", EXPAND(WIREGUARD_VERSION_STR)

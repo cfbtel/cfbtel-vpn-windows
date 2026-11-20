@@ -10,6 +10,7 @@ import (
 	"time"
 	_ "unsafe"
 
+	"golang.zx2c4.com/wireguard/windows/conf"
 	"golang.zx2c4.com/wireguard/windows/services"
 	"golang.zx2c4.com/wireguard/windows/updater"
 	"golang.zx2c4.com/wireguard/windows/version"
@@ -50,6 +51,9 @@ func checkForUpdates() {
 			updateState = UpdateStateFoundUpdate
 			IPCServerNotifyUpdateFound(updateState)
 			didNotify = true
+			if !conf.AdminBool("DisableAutoUpdate") {
+				go autoInstallUpdate()
+			}
 		} else if err != nil && !didNotify {
 			log.Printf("Update checker: %v", err)
 			if noError {
@@ -62,4 +66,36 @@ func checkForUpdates() {
 			jitterSleep(time.Hour-time.Minute*3, time.Hour+time.Minute*3)
 		}
 	}
+}
+
+// autoInstallUpdate installs a found update without anyone clicking "Update now" (CFBTEL VPN).
+// It waits for a moment when no tunnel is connected, so nobody's connection drops; if the VPN stays on,
+// it installs anyway after 24 hours (the tunnels come back by themselves after the upgrade).
+// Admins can turn this off with HKLM\Software\CFBTEL\VPN\DisableAutoUpdate = 1 (DWORD).
+func autoInstallUpdate() {
+	deadline := time.Now().Add(24 * time.Hour)
+	for attempt := 0; attempt < 24; attempt++ {
+		for trackedTunnelsGlobalState() != TunnelStopped && time.Now().Before(deadline) {
+			jitterSleep(time.Minute*4, time.Minute*6)
+		}
+		log.Println("Installing the update automatically")
+		if installUpdateNow() {
+			return
+		}
+		jitterSleep(time.Hour-time.Minute*3, time.Hour+time.Minute*3) // try again later
+	}
+}
+
+func installUpdateNow() bool {
+	for dp := range updater.DownloadVerifyAndExecute(0) {
+		IPCServerNotifyUpdateProgress(dp)
+		if dp.Error != nil {
+			log.Printf("Automatic update failed: %v", dp.Error)
+			return false
+		}
+		if dp.Complete {
+			return true
+		}
+	}
+	return false
 }
