@@ -96,7 +96,12 @@ jobs:
           @{ Endpoint = $env:AS_ENDPOINT; CodeSigningAccountName = $env:AS_ACCOUNT; CertificateProfileName = $env:AS_PROFILE; ExcludeCredentials = @('ManagedIdentityCredential','EnvironmentCredential','WorkloadIdentityCredential','SharedTokenCacheCredential','VisualStudioCredential','VisualStudioCodeCredential','AzurePowerShellCredential','AzureDeveloperCliCredential','InteractiveBrowserCredential') } | ConvertTo-Json | Set-Content -Encoding utf8 $meta
           $signtool = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\signtool.exe" | Sort-Object FullName -Descending | Select-Object -First 1
           # build.bat and installer\build.bat call sign.bat, which sets the signing options.
-          "@set SigningProvider=/dlib `"$dlib`" /dmdf `"$meta`"`r`n@set TimestampServer=http://timestamp.acs.microsoft.com`r`n@set PATH=$($signtool.DirectoryName);%PATH%" | Set-Content -Encoding ascii sign.bat
+          # The signing plug-in gets its Azure token from the Azure CLI (az.cmd). build.bat limits PATHEXT to .exe,
+          # so allow .cmd and put the CLI on PATH; fetch the token now so it's cached for the whole build.
+          $az = Split-Path (Get-Command az).Source
+          az account get-access-token --resource https://codesigning.azure.net --output none
+          if ($LASTEXITCODE -ne 0) { throw "Couldn't get an Artifact Signing token from Azure" }
+          "@set SigningProvider=/dlib `"$dlib`" /dmdf `"$meta`"`r`n@set TimestampServer=http://timestamp.acs.microsoft.com`r`n@set PATH=$($signtool.DirectoryName);$az;%PATH%`r`n@set PATHEXT=%PATHEXT%;.CMD;.BAT" | Set-Content -Encoding ascii sign.bat
           "CFBTEL_SIGNER=$env:SIGNER" >> $env:GITHUB_ENV
           "CFBTEL_SIGNED=true" >> $env:GITHUB_ENV
           Write-Host "Signing with Artifact Signing as: $env:SIGNER"
