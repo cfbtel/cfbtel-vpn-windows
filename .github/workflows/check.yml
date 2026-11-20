@@ -1,0 +1,37 @@
+# Builds the programs and the installers (unsigned) to check they compile. Publishes nothing.
+# Runs when the installer or the code changes; releases are made by release.yml.
+name: Check build (no release)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - installer/**
+      - ui/**
+      - diag/**
+      - speedtest/**
+      - manager/**
+      - updater/**
+      - .github/workflows/check.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - name: Build programs (unsigned)
+        shell: cmd
+        run: call build.bat
+
+      - name: Build installers (unsigned)
+        shell: cmd
+        run: call installer\build.bat

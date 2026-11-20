@@ -42,8 +42,56 @@
 		<Icon Id="wireguard.ico" SourceFile="..\ui\icon\wireguard.ico" />
 		<Binary Id="customactions.dll" SourceFile="$(var.WIREGUARD_PLATFORM)\customactions.dll" />
 
-		<!-- CFBTEL setup wizard: welcome + license and open-source notices, then install. Updates run without it (/qb!-). -->
-		<UIRef Id="WixUI_Minimal" />
+		<!--
+			CFBTEL setup wizard: one page with the license and open-source notices, "I accept", and
+			"Create a desktop icon" (ticked by default), then install. Updates run without it (/qb!-).
+			Same flow as WixUI_Minimal, with our own first page.
+		-->
+		<UI Id="CfbUI">
+			<TextStyle Id="WixUI_Font_Normal" FaceName="Segoe UI" Size="9" />
+			<TextStyle Id="WixUI_Font_Bigger" FaceName="Segoe UI" Size="12" />
+			<TextStyle Id="WixUI_Font_Title" FaceName="Segoe UI" Size="9" Bold="yes" />
+			<Property Id="DefaultUIFont" Value="WixUI_Font_Normal" />
+			<Property Id="WixUI_Mode" Value="Minimal" />
+
+			<DialogRef Id="ErrorDlg" />
+			<DialogRef Id="FatalError" />
+			<DialogRef Id="FilesInUse" />
+			<DialogRef Id="MsiRMFilesInUse" />
+			<DialogRef Id="PrepareDlg" />
+			<DialogRef Id="ProgressDlg" />
+			<DialogRef Id="ResumeDlg" />
+			<DialogRef Id="UserExit" />
+			<DialogRef Id="CancelDlg" />
+			<DialogRef Id="WaitForCostingDlg" />
+			<Publish Dialog="ExitDialog" Control="Finish" Event="EndDialog" Value="Return" Order="999">1</Publish>
+
+			<Dialog Id="CfbWelcomeDlg" Width="370" Height="270" Title="[ProductName] Setup">
+				<Control Id="Bitmap" Type="Bitmap" X="0" Y="0" Width="370" Height="234" TabSkip="no" Text="!(loc.WelcomeEulaDlgBitmap)" />
+				<Control Id="Title" Type="Text" X="130" Y="8" Width="226" Height="20" Transparent="yes" NoPrefix="yes" Text="{\WixUI_Font_Title}Install [ProductName]" />
+				<Control Id="LicenseText" Type="ScrollableText" X="130" Y="30" Width="226" Height="150" Sunken="yes" TabSkip="no">
+					<Text SourceFile="!(wix.WixUILicenseRtf)" />
+				</Control>
+				<Control Id="LicenseAcceptedCheckBox" Type="CheckBox" X="130" Y="186" Width="226" Height="16" CheckBoxValue="1" Property="LicenseAccepted" Text="I &amp;accept the terms in the License Agreement" />
+				<Control Id="DesktopIconCheckBox" Type="CheckBox" X="130" Y="206" Width="226" Height="16" CheckBoxValue="1" Property="DESKTOP_ICON" Text="Create a &amp;desktop icon" />
+				<Control Id="BottomLine" Type="Line" X="0" Y="234" Width="370" Height="0" />
+				<Control Id="Install" Type="PushButton" ElevationShield="yes" X="212" Y="243" Width="80" Height="17" Default="yes" Text="&amp;Install">
+					<Publish Event="SpawnWaitDialog" Value="WaitForCostingDlg">CostingComplete = 1</Publish>
+					<Publish Event="EndDialog" Value="Return"><![CDATA[LicenseAccepted = "1"]]></Publish>
+					<Condition Action="disable"><![CDATA[LicenseAccepted <> "1"]]></Condition>
+					<Condition Action="enable"><![CDATA[LicenseAccepted = "1"]]></Condition>
+				</Control>
+				<Control Id="Cancel" Type="PushButton" X="304" Y="243" Width="56" Height="17" Cancel="yes" Text="Cancel">
+					<Publish Event="SpawnDialog" Value="CancelDlg">1</Publish>
+				</Control>
+			</Dialog>
+
+			<InstallUISequence>
+				<Show Dialog="CfbWelcomeDlg" Before="ProgressDlg">NOT Installed</Show>
+			</InstallUISequence>
+		</UI>
+		<UIRef Id="WixUI_Common" />
+		<Property Id="ARPNOMODIFY" Value="1" />
 		<WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
 		<WixVariable Id="WixUIBannerBmp" Value="banner.bmp" />
 		<WixVariable Id="WixUIDialogBmp" Value="dialog.bmp" />
@@ -73,7 +121,27 @@
 				<Directory Id="WireGuardFolder" Name="CFBTEL VPN" />
 			</Directory>
 			<Directory Id="ProgramMenuFolder" />
+			<Directory Id="DesktopFolder" />
 		</Directory>
+
+		<!--
+			Desktop icon: ticked by default on a new install. The choice is saved (HKLM\Software\CFBTEL\VPN
+			DesktopIcon = yes/no) so silent updates keep it: nobody who said no, or deleted the icon, gets it back.
+		-->
+		<Property Id="DESKTOP_ICON" Value="1" Secure="yes" />
+		<Property Id="PREV_DESKTOP_ICON">
+			<RegistrySearch Id="PrevDesktopIconSearch" Root="HKLM" Key="Software\CFBTEL\VPN" Name="DesktopIcon" Type="raw" />
+		</Property>
+		<Property Id="DESKTOP_ICON_LNK">
+			<DirectorySearch Id="DesktopDirSearch" Path="[DesktopFolder]" Depth="0">
+				<FileSearch Id="DesktopLnkSearch" Name="CFBTEL VPN.lnk" />
+			</DirectorySearch>
+		</Property>
+		<!-- Untick it when the person said no before, or removed the icon since. (An empty value unsets the property.) -->
+		<SetProperty Action="ForgetDesktopIconUI" Id="DESKTOP_ICON" Value="[CFB_NO_VALUE]" After="AppSearch" Sequence="ui"><![CDATA[PREV_DESKTOP_ICON = "no" OR (PREV_DESKTOP_ICON = "yes" AND NOT DESKTOP_ICON_LNK)]]></SetProperty>
+		<SetProperty Action="ForgetDesktopIconQuiet" Id="DESKTOP_ICON" Value="[CFB_NO_VALUE]" After="AppSearch" Sequence="execute"><![CDATA[UILevel < 5 AND (PREV_DESKTOP_ICON = "no" OR (PREV_DESKTOP_ICON = "yes" AND NOT DESKTOP_ICON_LNK))]]></SetProperty>
+		<SetProperty Action="SaveDesktopIconYes" Id="DESKTOP_ICON_CHOICE" Value="yes" After="CostFinalize" Sequence="execute">DESKTOP_ICON</SetProperty>
+		<SetProperty Action="SaveDesktopIconNo" Id="DESKTOP_ICON_CHOICE" Value="no" After="CostFinalize" Sequence="execute">NOT DESKTOP_ICON</SetProperty>
 
 		<!--
 			Components
@@ -84,6 +152,14 @@
 					<Shortcut Id="WireGuardStartMenuShortcut" Directory="ProgramMenuFolder" Name="CFBTEL VPN" Description="CFBTEL VPN" WorkingDirectory="WireGuardFolder" Advertise="yes" />
 				</File>
 				<ServiceControl Id="DummyService.3AA0C492_29F4_4342_B608_DB95B2DECB13" Name="DummyService.3AA0C492_29F4_4342_B608_DB95B2DECB13" /><!-- A dummy to make WiX create ServiceControl table for us. -->
+			</Component>
+			<Component Directory="DesktopFolder" Id="DesktopShortcut" Guid="5b1e2c74-0f3a-4c8e-9d61-7a2b3c4d5e61">
+				<Condition>DESKTOP_ICON</Condition>
+				<Shortcut Id="WireGuardDesktopShortcut" Name="CFBTEL VPN" Description="CFBTEL VPN" Target="[WireGuardFolder]cfbtelvpn.exe" WorkingDirectory="WireGuardFolder" />
+				<RegistryValue Root="HKLM" Key="Software\CFBTEL\VPN" Name="DesktopShortcut" Type="integer" Value="1" KeyPath="yes" />
+			</Component>
+			<Component Directory="WireGuardFolder" Id="DesktopIconChoice" Guid="9c4d7e21-6b8a-4f30-8e15-2d9a6c7b8f42">
+				<RegistryValue Root="HKLM" Key="Software\CFBTEL\VPN" Name="DesktopIcon" Type="string" Value="[DESKTOP_ICON_CHOICE]" KeyPath="yes" />
 			</Component>
 			<Component Directory="WireGuardFolder" Id="WgExecutable" Guid="8345025d-310d-4387-9530-d3639aab8299">
 				<File Source="..\$(var.WIREGUARD_PLATFORM)\wg.exe" KeyPath="yes" />

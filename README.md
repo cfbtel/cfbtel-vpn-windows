@@ -46,6 +46,9 @@ What's different from upstream:
   (hashed MachineGuid), device public keys and the last 400 log lines to AdmixCentral (`POST /vpn/app/support`),
   which stores the ticket and emails it to help@cfbtel.com with the report attached. If that fails, the app copies
   the report, saves it to Documents and opens an email to help@cfbtel.com. No private or preshared keys are sent.
+* **Installer**: one page with the license, "I accept" and **Create a desktop icon** (ticked by default). The choice
+  is saved in `HKLM\Software\CFBTEL\VPN` `DesktopIcon` = yes/no; silent updates keep it, and someone who deleted
+  the icon doesn't get it back. `.github/workflows/check.yml` builds everything unsigned on each change (no release).
 * English UI.
 
 ## Releasing
